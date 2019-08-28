@@ -174,7 +174,7 @@ class SacAgent(ddpg_agent.TD3Agent):
           q values: A [batch_size] tensor of q values.
         """
         means, _log_vars, entropies = self.actor_net_backend(states)
-        return tf.stop_gradient(tf.exp(self.log_alpha) * entropies) + self.critic_net(
+        return tf.stop_gradient(tf.exp(self.log_alpha)) * entropies + self.critic_net(
             states, means, for_critic_loss=for_critic_loss)
 
     def target_value_net(self, states, for_critic_loss=False):
@@ -192,7 +192,7 @@ class SacAgent(ddpg_agent.TD3Agent):
         values1, values2 = self.target_critic_net(
             states, means + noise,
             for_critic_loss=for_critic_loss)
-        values = tf.stop_gradient(tf.exp(self.log_alpha) * entropies) + tf.minimum(
+        values = tf.stop_gradient(tf.exp(self.log_alpha)) * entropies + tf.minimum(
             values1, values2)
         return values, values
 
@@ -216,8 +216,7 @@ class SacAgent(ddpg_agent.TD3Agent):
         self._validate_states(states)
         means, _log_vars, entropies = self.actor_net_backend(states, stop_gradients=False)
         critic_values = self.critic_net(states, means)
-        q_values = tf.stop_gradient(tf.exp(self.log_alpha) * entropies) + self.critic_function(
-            critic_values, states)
+        q_values = self.critic_function(critic_values, states)
         dqda = tf.gradients([q_values], [means])[0]
         dqda_unclipped = dqda
         if self._dqda_clipping > 0:
@@ -234,12 +233,18 @@ class SacAgent(ddpg_agent.TD3Agent):
                     tf.summary.histogram('dqda_unclipped_%d' % a, dqda_unclipped[:, a])
                     tf.summary.histogram('dqda_%d' % a, dqda[:, a])
 
-        dual_loss = -tf.reduce_mean(
-            self.log_alpha * entropies + self.log_alpha * self.target_entropy)
-        tf.summary.scalar('log_alpha_loss', dual_loss)
+        policy_entropy = tf.reduce_mean(entropies)
+        entropy_loss = -tf.stop_gradient(tf.exp(self.log_alpha)) * policy_entropy
+        tf.summary.scalar('policy_entropy', policy_entropy)
+        tf.summary.scalar('entropy_loss', entropy_loss)
+
+        log_alpha_error = self.log_alpha * (
+            tf.stop_gradient(policy_entropy) - self.target_entropy)
+        tf.summary.scalar('log_alpha_error', log_alpha_error)
         tf.summary.scalar('log_alpha', self.log_alpha)
-        tf.summary.scalar('policy_entropy', tf.reduce_mean(entropies))
+
         actions_norm *= self._actions_regularizer
-        return slim.losses.mean_squared_error(tf.stop_gradient(dqda + means),
-                                              means,
-                                              scope='actor_loss') + actions_norm + dual_loss
+        return slim.losses.mean_squared_error(
+            tf.stop_gradient(dqda + means),
+            means,
+            scope='actor_loss') + actions_norm + log_alpha_error + entropy_loss
