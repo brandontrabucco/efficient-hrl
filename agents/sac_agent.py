@@ -44,7 +44,7 @@ class SacAgent(ddpg_agent.TD3Agent):
             target_q_clipping=target_q_clipping,
             residual_phi=residual_phi,
             debug_summaries=debug_summaries)
-        self.target_entropy = (
+        self.target_entropy = float(
             target_entropy if target_entropy is not None else
             -self._action_spec.shape.num_elements())
         self.log_alpha = slim.variable('log_alpha',
@@ -174,7 +174,7 @@ class SacAgent(ddpg_agent.TD3Agent):
           q values: A [batch_size] tensor of q values.
         """
         means, _log_vars, entropies = self.actor_net_backend(states)
-        return tf.stop_gradient(tf.exp(self.log_alpha)) * entropies + self.critic_net(
+        return tf.stop_gradient(tf.exp(self.log_alpha) * entropies) + self.critic_net(
             states, means, for_critic_loss=for_critic_loss)
 
     def target_value_net(self, states, for_critic_loss=False):
@@ -192,7 +192,7 @@ class SacAgent(ddpg_agent.TD3Agent):
         values1, values2 = self.target_critic_net(
             states, means + noise,
             for_critic_loss=for_critic_loss)
-        values = tf.stop_gradient(tf.exp(self.log_alpha)) * entropies + tf.minimum(
+        values = tf.stop_gradient(tf.exp(self.log_alpha) * entropies) + tf.minimum(
             values1, values2)
         return values, values
 
@@ -214,21 +214,22 @@ class SacAgent(ddpg_agent.TD3Agent):
           ValueError: If `states` does not have the expected dimensions.
         """
         self._validate_states(states)
-        means, _log_vars, entropies = self.actor_net_backend(states, stop_gradients=False)
-        critic_values = self.critic_net(states, means)
+        means, log_vars, entropies = self.actor_net_backend(states, stop_gradients=False)
+        actions = means + tf.random_normal(tf.shape(log_vars)) * tf.math.exp(log_vars)
+        critic_values = self.critic_net(states, actions)
         q_values = self.critic_function(critic_values, states)
-        dqda = tf.gradients([q_values], [means])[0]
+        dqda = tf.gradients([q_values], [actions])[0]
         dqda_unclipped = dqda
         if self._dqda_clipping > 0:
             dqda = tf.clip_by_value(dqda, -self._dqda_clipping, self._dqda_clipping)
 
-        actions_norm = tf.norm(means)
+        actions_norm = tf.norm(actions)
         if self._debug_summaries:
             with tf.name_scope('dqda'):
                 tf.summary.scalar('actions_norm', actions_norm)
                 tf.summary.histogram('dqda', dqda)
                 tf.summary.histogram('dqda_unclipped', dqda_unclipped)
-                tf.summary.histogram('actions', means)
+                tf.summary.histogram('actions', actions)
                 for a in range(self._num_action_dims):
                     tf.summary.histogram('dqda_unclipped_%d' % a, dqda_unclipped[:, a])
                     tf.summary.histogram('dqda_%d' % a, dqda[:, a])
@@ -245,6 +246,6 @@ class SacAgent(ddpg_agent.TD3Agent):
 
         actions_norm *= self._actions_regularizer
         return slim.losses.mean_squared_error(
-            tf.stop_gradient(dqda + means),
-            means,
+            tf.stop_gradient(dqda + actions),
+            actions,
             scope='actor_loss') + actions_norm + log_alpha_error + entropy_loss

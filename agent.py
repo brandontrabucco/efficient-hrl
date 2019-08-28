@@ -144,13 +144,14 @@ class UvfAgentCore(object):
                                 [batch_dims[0] * batch_dims[1], context.shape[-1]])
                      for context in contexts]
     flat_pred_actions, *rest = self.actions(flat_states, flat_contexts)
+    log_vars = 0.0
     if len(rest) > 0:
         log_vars = tf.reshape(rest[0],
                               batch_dims + [rest[0].shape[-1]])
     pred_actions = tf.reshape(flat_pred_actions,
                               batch_dims + [flat_pred_actions.shape[-1]])
 
-    error = tf.square((actions - pred_actions) / tf.exp(log_vars))
+    error = tf.square((actions - pred_actions)) / tf.exp(log_vars)
     spec_range = (self._action_spec.maximum - self._action_spec.minimum) / 2
     normalized_error = error / tf.constant(spec_range) ** 2
     return -normalized_error
