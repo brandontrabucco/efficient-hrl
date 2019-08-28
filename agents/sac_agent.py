@@ -3,6 +3,7 @@ slim = tf.contrib.slim
 import gin.tf
 from utils import utils
 from agents import ddpg_agent
+from agents import sac_networks, ddpg_networks
 
 
 """An SAC/NAF agent.
@@ -19,12 +20,33 @@ https://arxiv.org/pdf/1603.00748.
 class SacAgent(ddpg_agent.TD3Agent):
 
     def __init__(self,
-        *args,
-        target_entropy=(-1.0),
-        **kwargs
+        observation_spec,
+        action_spec,
+        target_entropy=None,
+        actor_net=sac_networks.actor_net,
+        critic_net=ddpg_networks.critic_net,
+        td_errors_loss=tf.losses.huber_loss,
+        dqda_clipping=0.,
+        actions_regularizer=0.,
+        target_q_clipping=None,
+        residual_phi=0.0,
+        debug_summaries=False
     ):
-        ddpg_agent.TD3Agent.__init__(self, *args, **kwargs)
-        self.target_entropy = target_entropy
+        ddpg_agent.TD3Agent.__init__(
+            self,
+            observation_spec,
+            action_spec,
+            actor_net=actor_net,
+            critic_net=critic_net,
+            td_errors_loss=td_errors_loss,
+            dqda_clipping=dqda_clipping,
+            actions_regularizer=actions_regularizer,
+            target_q_clipping=target_q_clipping,
+            residual_phi=residual_phi,
+            debug_summaries=debug_summaries)
+        self.target_entropy = (
+            target_entropy if target_entropy is not None else
+            -self._action_spec.shape.num_elements())
         self.log_alpha = slim.variable('log_alpha',
                                        shape=[],
                                        initializer=tf.zeros_initializer())
@@ -46,9 +68,9 @@ class SacAgent(ddpg_agent.TD3Agent):
         Returns:
           A [num_action_dims] tensor representing the action.
         """
-        mean, _log_var, _entropy = self.actor_net(self._batch_state(state),
-                                                  stop_gradients=True)[0, :]
-        return mean
+        mean, _log_var, _entropy = self.actor_net_backend(
+            self._batch_state(state), stop_gradients=True)
+        return mean[0, :]
 
     @gin.configurable('sac_sample_action')
     def sample_action(self, state, stddev=None):
@@ -60,10 +82,34 @@ class SacAgent(ddpg_agent.TD3Agent):
         Returns:
           A [num_action_dims] action tensor.
         """
-        mean, log_var, _entropy = self.actor_net(self._batch_state(state),
-                                                 stop_gradients=True)[0, :]
+        mean, log_var, _entropy = self.actor_net_backend(
+            self._batch_state(state), stop_gradients=True)
         x = mean + tf.random_normal(tf.shape(log_var)) * tf.math.exp(log_var)
-        return utils.clip_to_spec(x, self._action_spec)
+        return utils.clip_to_spec(x[0, :], self._action_spec)
+
+    def actor_net_backend(self, states, stop_gradients=False):
+        """Returns the output of the actor network.
+
+        Args:
+          states: A [batch_size, num_state_dims] tensor representing a batch
+            of states.
+          stop_gradients: (boolean) if true, gradients cannot be propogated through
+            this operation.
+        Returns:
+          A [batch_size, num_action_dims] tensor of actions.
+          A [batch_size, num_action_dims] tensor of log variances.
+          A [batch_size] tensor of entropies.
+        Raises:
+          ValueError: If `states` does not have the expected dimensions.
+        """
+        self._validate_states(states)
+        means, log_vars = tf.split(self._actor_net(states, self._action_spec), 2, axis=(-1))
+        entropies = 0.5 * tf.reduce_sum(log_vars, axis=(-1)) + 0.89908993417
+        if stop_gradients:
+            means = tf.stop_gradient(means)
+            log_vars = tf.stop_gradient(log_vars)
+            entropies = tf.stop_gradient(entropies)
+        return means, log_vars, entropies
 
     def actor_net(self, states, stop_gradients=False):
         """Returns the output of the actor network.
@@ -78,14 +124,29 @@ class SacAgent(ddpg_agent.TD3Agent):
         Raises:
           ValueError: If `states` does not have the expected dimensions.
         """
+        return self.actor_net_backend(states, stop_gradients=stop_gradients)
+
+    def target_actor_net_backend(self, states):
+        """Returns the output of the target actor network.
+
+        The target network is used to compute stable targets for training.
+
+        Args:
+          states: A [batch_size, num_state_dims] tensor representing a batch
+            of states.
+        Returns:
+          A [batch_size, num_action_dims] tensor of actions.
+          A [batch_size, num_action_dims] tensor of log variances.
+          A [batch_size] tensor of entropies.
+        Raises:
+          ValueError: If `states` does not have the expected dimensions.
+        """
         self._validate_states(states)
-        actions = self._actor_net(states, self._action_spec)
-        means, log_vars = tf.split(actions, 1, axis=(-1))
+        means, log_vars = tf.split(self._target_actor_net(states, self._action_spec), 2, axis=(-1))
         entropies = 0.5 * tf.reduce_sum(log_vars, axis=(-1)) + 0.89908993417
-        if stop_gradients:
-            means = tf.stop_gradient(means)
-            log_vars = tf.stop_gradient(log_vars)
-            entropies = tf.stop_gradient(entropies)
+        means = tf.stop_gradient(means)
+        log_vars = tf.stop_gradient(log_vars)
+        entropies = tf.stop_gradient(entropies)
         return means, log_vars, entropies
 
     def target_actor_net(self, states):
@@ -101,14 +162,7 @@ class SacAgent(ddpg_agent.TD3Agent):
         Raises:
           ValueError: If `states` does not have the expected dimensions.
         """
-        self._validate_states(states)
-        actions = self._target_actor_net(states, self._action_spec)
-        means, log_vars = tf.split(actions, 1, axis=(-1))
-        entropies = 0.5 * tf.reduce_sum(log_vars, axis=(-1)) + 0.89908993417
-        means = tf.stop_gradient(means)
-        log_vars = tf.stop_gradient(log_vars)
-        entropies = tf.stop_gradient(entropies)
-        return means, log_vars, entropies
+        return self.target_actor_net_backend(states)
 
     def value_net(self, states, for_critic_loss=False):
         """Returns the output of the critic evaluated with the actor.
@@ -119,7 +173,7 @@ class SacAgent(ddpg_agent.TD3Agent):
         Returns:
           q values: A [batch_size] tensor of q values.
         """
-        means, _log_vars, entropies = self.actor_net(states)
+        means, _log_vars, entropies = self.actor_net_backend(states)
         return tf.stop_gradient(tf.exp(self.log_alpha) * entropies) + self.critic_net(
             states, means, for_critic_loss=for_critic_loss)
 
@@ -132,7 +186,7 @@ class SacAgent(ddpg_agent.TD3Agent):
         Returns:
           q values: A [batch_size] tensor of q values.
         """
-        means, _log_vars, entropies = self.target_actor_net(states)
+        means, _log_vars, entropies = self.target_actor_net_backend(states)
         noise = tf.clip_by_value(
             tf.random_normal(tf.shape(means), stddev=0.2), -0.5, 0.5)
         values1, values2 = self.target_critic_net(
@@ -160,7 +214,7 @@ class SacAgent(ddpg_agent.TD3Agent):
           ValueError: If `states` does not have the expected dimensions.
         """
         self._validate_states(states)
-        means, _log_vars, entropies = self.actor_net(states, stop_gradients=False)
+        means, _log_vars, entropies = self.actor_net_backend(states, stop_gradients=False)
         critic_values = self.critic_net(states, means)
         q_values = tf.stop_gradient(tf.exp(self.log_alpha) * entropies) + self.critic_function(
             critic_values, states)

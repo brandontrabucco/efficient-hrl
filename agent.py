@@ -18,7 +18,7 @@
 
 import tensorflow as tf
 import gin.tf
-from agents import ddpg_agent
+from agents import ddpg_agent, sac_agent
 # pylint: disable=unused-import
 import cond_fn
 from utils import utils as uvf_utils
@@ -143,11 +143,14 @@ class UvfAgentCore(object):
     flat_contexts = [tf.reshape(tf.cast(context, states.dtype),
                                 [batch_dims[0] * batch_dims[1], context.shape[-1]])
                      for context in contexts]
-    flat_pred_actions = self.actions(flat_states, flat_contexts)
+    flat_pred_actions, *rest = self.actions(flat_states, flat_contexts)
+    if len(rest) > 0:
+        log_vars = tf.reshape(rest[0],
+                              batch_dims + [rest[0].shape[-1]])
     pred_actions = tf.reshape(flat_pred_actions,
                               batch_dims + [flat_pred_actions.shape[-1]])
 
-    error = tf.square(actions - pred_actions)
+    error = tf.square((actions - pred_actions) / tf.exp(log_vars))
     spec_range = (self._action_spec.maximum - self._action_spec.minimum) / 2
     normalized_error = error / tf.constant(spec_range) ** 2
     return -normalized_error
@@ -548,7 +551,7 @@ class MetaAgentCore(UvfAgentCore):
     Returns:
       A [num_action_dims] tensor representing the action.
     """
-    actions = self.actor_net(states, stop_gradients=False)
+    actions, *rest = self.actor_net(states, stop_gradients=False)
     regularizer = self._actions_reg * tf.reduce_mean(
         tf.reduce_sum(tf.abs(actions[:, self._k:]), -1), 0)
     loss = self.BASE_AGENT_CLASS.actor_loss(self, states)
@@ -571,6 +574,28 @@ class MetaAgent(MetaAgentCore, ddpg_agent.TD3Agent):
   """A DDPG meta-agent.
   """
   BASE_AGENT_CLASS = ddpg_agent.TD3Agent
+  ACTION_TYPE = 'continuous'
+
+  def __init__(self, *args, **kwargs):
+    MetaAgentCore.__init__(self, *args, **kwargs)
+
+
+@gin.configurable
+class SacUvfAgent(UvfAgentCore, sac_agent.SacAgent):
+  """An SAC agent with UVF.
+  """
+  BASE_AGENT_CLASS = sac_agent.SacAgent
+  ACTION_TYPE = 'continuous'
+
+  def __init__(self, *args, **kwargs):
+    UvfAgentCore.__init__(self, *args, **kwargs)
+
+
+@gin.configurable
+class SacMetaAgent(MetaAgentCore, sac_agent.SacAgent):
+  """An SAC meta-agent.
+  """
+  BASE_AGENT_CLASS = sac_agent.SacAgent
   ACTION_TYPE = 'continuous'
 
   def __init__(self, *args, **kwargs):
