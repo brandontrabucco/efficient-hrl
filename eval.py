@@ -385,7 +385,7 @@ def evaluate(checkpoint_dir,
           dtype=uvf_agent._observation_spec.dtype,
           shape=uvf_agent._observation_spec.shape), 0)
   # pylint: enable=protected-access
-  temp_actions = uvf_agent.actor_net(temp_states)
+  temp_actions, *rest = uvf_agent.actor_net(temp_states)
   uvf_agent.critic_net(temp_states, temp_actions)
 
   # create eval_step_fns for each action function

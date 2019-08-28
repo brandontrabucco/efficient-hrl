@@ -70,11 +70,13 @@ def actor_net(states, action_spec,
                                      2 * action_spec.shape.num_elements(),
                                      scope='actions',
                                      normalizer_fn=None,
-                                     activation_fn=tf.nn.tanh)
+                                     activation_fn=None)
 
       means, log_vars = tf.split(actions, 2, axis=(-1))
       action_means = (action_spec.maximum + action_spec.minimum) / 2.0
       action_magnitudes = (action_spec.maximum - action_spec.minimum) / 2.0
-      means = action_means + action_magnitudes * means
+      means = action_means + action_magnitudes * tf.nn.tanh(means)
+
+      log_vars = 6 * tf.nn.tanh(log_vars) - 3.0  # between -9 and +3
 
     return tf.concat([means, log_vars], (-1))

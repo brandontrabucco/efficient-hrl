@@ -47,9 +47,10 @@ class SacAgent(ddpg_agent.TD3Agent):
         self.target_entropy = float(
             target_entropy if target_entropy is not None else
             -self._action_spec.shape.num_elements())
-        self.log_alpha = slim.variable('log_alpha',
-                                       shape=[],
-                                       initializer=tf.zeros_initializer())
+        self.log_alpha = slim.variable(
+            'log_alpha',
+            shape=[],
+            initializer=tf.zeros_initializer())
 
     def get_trainable_actor_vars(self):
         """Returns a list of trainable variables in the actor network.
@@ -239,13 +240,15 @@ class SacAgent(ddpg_agent.TD3Agent):
         tf.summary.scalar('policy_entropy', policy_entropy)
         tf.summary.scalar('entropy_loss', entropy_loss)
 
-        log_alpha_error = self.log_alpha * (
-            tf.stop_gradient(policy_entropy) - self.target_entropy)
+        log_alpha_error = tf.stop_gradient(policy_entropy) - self.target_entropy
+        log_alpha_loss = self.log_alpha * log_alpha_error
         tf.summary.scalar('log_alpha_error', log_alpha_error)
+        tf.summary.scalar('log_alpha_loss', log_alpha_loss)
         tf.summary.scalar('log_alpha', self.log_alpha)
+        tf.summary.scalar('target_entropy', self.target_entropy)
 
         actions_norm *= self._actions_regularizer
         return slim.losses.mean_squared_error(
             tf.stop_gradient(dqda + actions),
             actions,
-            scope='actor_loss') + actions_norm + log_alpha_error + entropy_loss
+            scope='actor_loss') + actions_norm + log_alpha_loss + entropy_loss
