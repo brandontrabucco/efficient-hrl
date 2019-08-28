@@ -1,0 +1,7 @@
+*.pyc
+.idea/
+events.out.tfevents.**
+*.egg-info/
+*.ckpt*
+checkpoint
+*.out
