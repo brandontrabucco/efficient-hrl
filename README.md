@@ -1,4 +1,4 @@
-Additions made by Brandon Trabucco. To run the connected policy method, run the following commands in teh terminal.
+Some additions made by Brandon Trabucco. To train with centralized policies, run the following.
 
 ```
 python scripts/local_train.py connected_policies1 hiro_connected_policies ant_maze base_uvf suite
