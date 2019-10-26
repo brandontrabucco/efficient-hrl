@@ -1,3 +1,12 @@
+Additions made by Brandon Trabucco. To run the connected policy method, run the following commands in teh terminal.
+
+```
+python scripts/local_train.py connected_policies1 hiro_connected_policies ant_maze base_uvf suite
+python scripts/local_eval.py connected_policies1 hiro_connected_policies ant_maze base_uvf suite
+```
+
+---
+
 Code for performing Hierarchical RL based on the following publications:
 
 "Data-Efficient Hierarchical Reinforcement Learning" by

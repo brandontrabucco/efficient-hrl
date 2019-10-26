@@ -31,6 +31,7 @@ import gin.tf
 # pylint: disable=unused-import
 import train_utils
 import agent as agent_
+from agents.connected_agent import ConnectedAgent
 from agents import circular_buffer
 from utils import utils as uvf_utils
 from environments import create_maze_env
@@ -315,7 +316,8 @@ def train_uvf(train_dir,
               debug=False,
               max_policies_to_save=None,
               max_steps_per_episode=None,
-              load_path=LOAD_PATH):
+              load_path=LOAD_PATH,
+              use_connected_policies=False):
   """Train an agent."""
   tf_env = create_maze_env.TFPyEnvironment(environment)
   observation_spec = [tf_env.observation_spec()]
@@ -350,6 +352,9 @@ def train_uvf(train_dir,
         debug_summaries=debug_summaries)
     uvf_agent.set_meta_agent(agent=meta_agent)
     uvf_agent.set_replay(replay=replay_buffer)
+
+  if use_connected_policies:
+      meta_agent = ConnectedAgent(meta_agent, uvf_agent)
 
   with tf.variable_scope('state_preprocess'):
     state_preprocess = state_preprocess_class()
