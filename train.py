@@ -535,6 +535,11 @@ def train_uvf(train_dir,
             dtype=context_discounts.dtype)
       else: context_discounts *= my_gamma
 
+      if mode == "meta" and use_connected_policies:
+
+        merged_states = low_states
+        actions = low_actions
+
       critic_loss = agent.critic_loss(merged_states, actions,
                                       context_rewards, context_discounts,
                                       merged_next_states)
