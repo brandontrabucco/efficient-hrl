@@ -61,7 +61,8 @@ class ConnectedAgent(object):
     lower_actions = tf.reshape(
       lower_actions, 
       [tf.shape(lower_actions)[0], tf.shape(lower_actions)[1] * tf.shape(lower_actions)[2]])
-    return self.upper_agent.critic_net(
+    lower_states = tf.concat([lower_states, states], 1)
+    return self.upper_agent._critic_net(
       lower_states, lower_actions, for_critic_loss=for_critic_loss)
 
   def target_critic_net(self, states, actions, for_critic_loss=False, 
@@ -86,8 +87,9 @@ class ConnectedAgent(object):
     lower_actions = tf.reshape(
       lower_actions, 
       [tf.shape(lower_actions)[0], tf.shape(lower_actions)[1] * tf.shape(lower_actions)[2]])
-    return self.upper_agent.target_critic_net(
-      lower_states, lower_actions, for_critic_loss=for_critic_loss)
+    lower_states = tf.concat([lower_states, states], 1)
+    return tf.stop_gradient(self.upper_agent._target_critic_net(
+      lower_states, lower_actions, for_critic_loss=for_critic_loss))
 
   def value_net(self, states, for_critic_loss=False, lower_states=None):
     """Returns the output of the critic evaluated with the actor.
@@ -111,13 +113,14 @@ class ConnectedAgent(object):
 
     self.lower_agent._validate_states(lower_level_inputs)
 
-    lower_level_actions = self.lower_agent.actor_net(
+    lower_actions = self.lower_agent.actor_net(
         lower_level_inputs, stop_gradients=True)
-    lower_level_actions = tf.reshape(
-      lower_level_actions, 
-      [tf.shape(lower_states)[0], tf.shape(lower_states)[1], tf.shape(lower_level_actions)[1]])
+    lower_actions = tf.reshape(
+      lower_actions, 
+      [tf.shape(lower_states)[0], tf.shape(lower_states)[1], tf.shape(lower_actions)[1]])
     return self.critic_net(
-      lower_states, lower_level_actions, for_critic_loss=for_critic_loss)
+      states, upper_level_actions, for_critic_loss=for_critic_loss, 
+      lower_states=lower_states, lower_actions=lower_actions)
 
   def target_value_net(self, states, for_critic_loss=False, lower_states=None):
     """Returns the output of the target critic evaluated with the target actor.
@@ -129,7 +132,7 @@ class ConnectedAgent(object):
       q values: A [batch_size] tensor of q values.
     """
     upper_level_actions = self.upper_agent.target_actor_net(
-        states, stop_gradients=True)
+        states)
     lower_level_inputs = tf.concat([
       lower_states, 
       tf.tile(
@@ -141,13 +144,14 @@ class ConnectedAgent(object):
 
     self.lower_agent._validate_states(lower_level_inputs)
 
-    lower_level_actions = self.lower_agent.target_actor_net(
-        lower_level_inputs, stop_gradients=True)
-    lower_level_actions = tf.reshape(
-      lower_level_actions, 
-      [tf.shape(lower_states)[0], tf.shape(lower_states)[1], tf.shape(lower_level_actions)[1]])
+    lower_actions = self.lower_agent.target_actor_net(
+        lower_level_inputs)
+    lower_actions = tf.reshape(
+      lower_actions, 
+      [tf.shape(lower_states)[0], tf.shape(lower_states)[1], tf.shape(lower_actions)[1]])
     return self.target_critic_net(
-      lower_states, lower_level_actions, for_critic_loss=for_critic_loss)
+      states, upper_level_actions, for_critic_loss=for_critic_loss,
+      lower_states=lower_states, lower_actions=lower_actions)
 
   def critic_loss(self, states, actions, rewards, discounts,
                   next_states, lower_states=None, 
@@ -182,8 +186,10 @@ class ConnectedAgent(object):
     if self._target_q_clipping is not None:
       td_targets = tf.clip_by_value(td_targets, self._target_q_clipping[0],
                                     self._target_q_clipping[1])
+
     q_values = self.critic_net(states, actions, for_critic_loss=True, 
                                lower_states=lower_states, lower_actions=lower_actions)
+
     td_errors = td_targets - q_values
     if self._debug_summaries:
       gen_debug_td_error_summaries(
@@ -206,7 +212,7 @@ class ConnectedAgent(object):
               residual_loss * self._residual_phi)
     return loss
 
-  def actor_loss(self, statesi, lower_states=None):
+  def actor_loss(self, states, lower_states=None):
     """Computes a loss for training the actor network.
     Note that output does not represent an actual loss. It is called a loss only
     in the sense that its gradient w.r.t. the actor network weights is the
@@ -240,7 +246,8 @@ class ConnectedAgent(object):
       lower_level_actions, 
       [tf.shape(lower_states)[0], tf.shape(lower_states)[1], tf.shape(lower_level_actions)[1]])
     critic_values = self.critic_net(
-      lower_states, lower_level_actions, for_critic_loss=False)
+      states, upper_level_actions,
+      lower_states=lower_states, lower_actions=lower_level_actions, for_critic_loss=False)
 
     q_values = self.critic_function(critic_values, lower_states)
     dqda = tf.gradients([q_values], [upper_level_actions])[0]

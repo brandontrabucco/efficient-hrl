@@ -538,20 +538,34 @@ def train_uvf(train_dir,
 
       if mode == "meta" and use_connected_policies:
 
-        merged_states = low_states
-        actions = low_actions
+        # this is a hack for now, and the "right" method requires on policy data
+        low_next_states = tf.tile(                                                                                            next_states[:, tf.newaxis, :], [1, tf.shape(low_states)[1], 1])
 
-      critic_loss = agent.critic_loss(merged_states, actions,
+        critic_loss = agent.critic_loss(merged_states, actions,
+                                        context_rewards, context_discounts,
+                                        merged_next_states,
+                                        lower_states=low_states,
+                                        lower_actions=low_actions,
+                                        lower_next_states=low_next_states)
+
+        actor_loss = agent.actor_loss(merged_states,
+                                      lower_states=low_states)
+
+      else:
+
+        # this is the normal method for HIRO
+        critic_loss = agent.critic_loss(merged_states, actions,
+                                        context_rewards, context_discounts,
+                                        merged_next_states)
+
+        actor_loss = agent.actor_loss(merged_states, actions,
                                       context_rewards, context_discounts,
                                       merged_next_states)
-
+        
       critic_loss = tf.reduce_mean(critic_loss)
 
-      actor_loss = agent.actor_loss(merged_states, actions,
-                                    context_rewards, context_discounts,
-                                    merged_next_states)
       actor_loss *= tf.to_float(  # Only update actor every N steps.
-          tf.equal(n_updates % target_update_period, 0))
+        tf.equal(n_updates % target_update_period, 0))
 
       critic_train_op = slim.learning.create_train_op(
           critic_loss,
