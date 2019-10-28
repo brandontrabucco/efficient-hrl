@@ -185,6 +185,7 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
 
     actions_var_upd = tf.scatter_update(
         actions_var, (agent.tf_context.t - 2) % meta_action_every_n, action)
+
     with tf.control_dependencies([actions_var_upd]):
       actions = tf.identity(actions_var) + tf.zeros_like(actions_var)
       meta_reward = tf.identity(meta_reward) + tf.zeros_like(meta_reward)
