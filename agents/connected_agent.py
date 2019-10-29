@@ -121,7 +121,7 @@ class ConnectedAgent(object):
     """
     upper_actions = self.upper_agent.actor_net(states, stop_gradients=True)
     lower_actions = unbatch(self.lower_agent.actor_net(
-        concat_and_batch(lower_states, upper_actions), stop_gradients=True))
+        concat_and_batch(lower_states, upper_actions), stop_gradients=True), tf.shape(lower_states)[1])
     return self.critic_net(
       states, upper_actions, for_critic_loss=for_critic_loss, 
       lower_states=lower_states, lower_actions=lower_actions)
@@ -139,7 +139,7 @@ class ConnectedAgent(object):
     """
     upper_actions = self.upper_agent.target_actor_net(states)
     lower_actions = unbatch(self.lower_agent.target_actor_net(
-        concat_and_batch(lower_states, upper_actions)))
+        concat_and_batch(lower_states, upper_actions)), tf.shape(lower_states)[1])
     return self.target_critic_net(
       states, upper_actions, for_critic_loss=for_critic_loss,
       lower_states=lower_states, lower_actions=lower_actions)
@@ -231,10 +231,10 @@ class ConnectedAgent(object):
     upper_actions = self.upper_agent.actor_net(
         states, stop_gradients=False)
     lower_actions = unbatch(self.lower_agent.actor_net(
-        concat_and_batch(lower_states, upper_actions), stop_gradients=False))
+        concat_and_batch(lower_states, upper_actions), stop_gradients=False), tf.shape(lower_states)[1])
     critic_values = self.critic_net(
       states, upper_actions, for_critic_loss=False,
-      lower_states=lower_states, lower_actions=lower_level_actions)
+      lower_states=lower_states, lower_actions=lower_actions)
 
     q_values = self.critic_function(critic_values, lower_states)
     dqda = tf.gradients([q_values], [upper_actions])[0]
@@ -242,7 +242,7 @@ class ConnectedAgent(object):
     if self._dqda_clipping > 0:
       dqda = tf.clip_by_value(dqda, -self._dqda_clipping, self._dqda_clipping)
 
-    actions_norm = tf.norm(upper_level_actions)
+    actions_norm = tf.norm(upper_actions)
     if self._debug_summaries:
       with tf.name_scope('dqda'):
         tf.summary.scalar('actions_norm', actions_norm)

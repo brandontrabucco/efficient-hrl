@@ -1,8 +1,8 @@
 To train with centralized policies, run the following.
 
 ```
-python scripts/local_train.py connected_policies1 hiro_connected_policies ant_maze base_uvf suite
-python scripts/local_eval.py connected_policies1 hiro_connected_policies ant_maze base_uvf suite
+python scripts/local_train.py connected_policies hiro_connected_policies ant_maze base_uvf suite
+python scripts/local_eval.py connected_policies hiro_connected_policies ant_maze base_uvf suite
 ```
 
 ---

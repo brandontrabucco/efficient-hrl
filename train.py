@@ -200,13 +200,18 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
     if store_context:  # store current and next context into replay
       transition += context + list(agent.context_vars)
       meta_transition += meta_context_var + list(meta_agent.context_vars)
+        
+    meta_transition_previous = []
+    with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
+        for t in meta_transition:
+            tp = tf.get_variable(t.name[:-2] + "_previous", t.shape, t.dtype)
+            meta_transition_previous.append(tp)
 
     meta_step_cond = tf.squeeze(tf.logical_and(step_cond, tf.logical_or(next_reset_episode_cond, meta_end)))
-
     collect_experience_op = tf.group(
         replay_buffer.maybe_add(transition, step_cond),
-        meta_replay_buffer.maybe_add(meta_transition, meta_step_cond),
-    )
+        meta_replay_buffer.maybe_add(
+            meta_transition_previous + meta_transition, meta_step_cond))
 
   with tf.control_dependencies([collect_experience_op]):
     collect_experience_op = tf.cond(reset_env_cond,
@@ -214,6 +219,9 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
                                     tf_env.current_time_step)
 
     meta_period = tf.equal(agent.tf_context.t % meta_action_every_n, 1)
+    meta_transition_update_ops = []
+    for t, tp in zip(meta_transition, meta_transition_previous):
+        meta_transition_update_ops.append(tf.assign(tp, tf.cond(meta_period, lambda: t, lambda: tp)))
     states_var_upd = tf.scatter_update(
         states_var, (agent.tf_context.t - 1) % meta_action_every_n,
         next_state)
@@ -243,7 +251,7 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
       state_var_upd,
       reward_var_upd,
       meta_action_var_upd,
-      *meta_context_var_upd)
+      *(meta_context_var_upd + meta_transition_update_ops))
 
 
 def sample_best_meta_actions(state_reprs, next_state_reprs, prev_meta_actions,
@@ -475,13 +483,24 @@ def train_uvf(train_dir,
             for batch in batch_dequeue
         ]
         batch_size *= (repeat_size + 1)
+        
+      # Get contexts for training
       states, actions, rewards, discounts, next_states = batch_dequeue[:5]
+      contexts, next_contexts = agent.sample_contexts(
+        mode='train', batch_size=batch_size,
+        state=states, next_state=next_states)
+    
       if mode == 'meta':
         low_states = batch_dequeue[5]
         low_actions = batch_dequeue[6]
         low_state_reprs = state_preprocess(low_states)
       state_reprs = state_preprocess(states)
       next_state_reprs = state_preprocess(next_states)
+        
+      if mode == "meta" and use_connected_policies:
+        low_next_states = batch_dequeue[(7 + len(contexts) * 2) + 5]
+        low_next_actions = batch_dequeue[(7 + len(contexts) * 2) + 6]
+        low_next_state_reprs = state_preprocess(low_next_states)
 
       if mode == 'meta':  # Re-label meta-action
         prev_actions = actions
@@ -510,15 +529,11 @@ def train_uvf(train_dir,
             clip_gradient_norm=clip_gradient_norm,
             variables_to_train=state_preprocess.get_trainable_vars(),)
 
-      # Get contexts for training
-      contexts, next_contexts = agent.sample_contexts(
-          mode='train', batch_size=batch_size,
-          state=states, next_state=next_states,
-      )
       if not relabel:  # Re-label context (in the style of TDM or HER).
+        shift_index = (5 if mode == "nometa" else 7)
         contexts, next_contexts = (
-            batch_dequeue[-2*len(contexts):-1*len(contexts)],
-            batch_dequeue[-1*len(contexts):])
+          batch_dequeue[shift_index:(shift_index + len(contexts))],
+          batch_dequeue[(shift_index + len(contexts)):(shift_index + len(contexts) * 2)])
 
       merged_states = agent.merged_states(states, contexts)
       merged_next_states = agent.merged_states(next_states, next_contexts)
@@ -537,9 +552,6 @@ def train_uvf(train_dir,
       else: context_discounts *= my_gamma
 
       if mode == "meta" and use_connected_policies:
-
-        # this is a hack for now, and the "right" method requires on policy data
-        low_next_states = tf.tile(                                                                                            next_states[:, tf.newaxis, :], [1, tf.shape(low_states)[1], 1])
 
         critic_loss = agent.critic_loss(merged_states, actions,
                                         context_rewards, context_discounts,
