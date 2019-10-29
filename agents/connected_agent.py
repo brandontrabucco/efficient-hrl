@@ -3,43 +3,56 @@ slim = tf.contrib.slim
 import gin.tf
 
 
+def flatten(x):
+  """Flattens the temporal component of x into the feature dimension.
+  
+  Args:
+    x: a tensor of shape [batch_sims, T, num_features] to be flattened.
+  """
+  return tf.reshape(x, [tf.shape(x)[0], tf.shape(x)[1] * tf.shape(x)[2]])
+
+
+def concat_and_batch(x, y):   
+  """Concatenates x and y along the feature axis and
+  Flattens the temporal component of the result into the batch dimension.
+  
+  Args:
+    x: a tensor of shape [batch_sims, T, num_features] to be merged.
+    y: a tensor of shape [batch_sims, T, num_features] to be merged.
+  """ 
+  z = tf.concat([
+    x, tf.tile(y[:, tf.newaxis, :], [1, tf.shape(x)[1], 1])], 2)
+  return tf.reshape(
+    z, [tf.shape(x)[0] * tf.shape(x)[1], tf.shape(z)[2]])
+
+
+def unbatch(x, size):    
+  """Expands the temporal dimension of x.
+  
+  Args:
+    x: a tensor of shape [batch_sime * size, num_features] to be unbatched.
+  """
+  return tf.reshape(x, [tf.shape(x)[0] // size, size, tf.shape(x)[1]])
+
+
 @gin.configurable
 class ConnectedAgent(object):
   """An RL agent that learns using the Connected Policy algorithm."""
 
   def __init__(self,
                upper_agent,
-               lower_agent):
+               lower_agent,
+               max_horizon=None):
     """Constructs a Connected Policy agent.
 
     Args:
       upper_agent: a pointer to an existing upper level (meta) agent.
       lower_agent: a pointer to an existing lower level agent.
+      max_horizon: an integer (optional) for max number of q inputs in time.
     """
     self.upper_agent = upper_agent
     self.lower_agent = lower_agent
-
-  def __getattr__(self, attr):
-    if attr == "upper_agent":
-      return self.__dict__["upper_agent"]
-    if attr == "lower_agent":
-      return self.__dict__["lower_agent"]
-    else:
-      return getattr(self.__dict__["upper_agent"], attr)
-
-  def __setattr__(self, attr, value):
-    if attr == "upper_agent":
-      self.__dict__["upper_agent"] = value
-    if attr == "lower_agent":
-      self.__dict__["lower_agent"] = value
-    else:
-      setattr(self.__dict__["upper_agent"], attr, value)
-
-  def __getstate__(self):
-    return self.__dict__
-
-  def __setstate__(self, state):
-    self.__dict__.update(state)
+    self.max_horizon = max_horizon
 
   def critic_net(self, states, actions, for_critic_loss=False, 
                  lower_states=None, lower_actions=None):
@@ -50,18 +63,20 @@ class ConnectedAgent(object):
         of states.
       actions: A [batch_size, num_action_dims] tensor representing a batch
         of upper level actions.
+      lower_states: A [batch_size, T, num_state_dims] tensor representing a batch
+        of lower level states.
+      lower_actions: A [batch_size, T, num_action_dims] tensor representing a batch
+        of lower level actions.
     Returns:
       q values: A [batch_size] tensor of q values.
     Raises:
       ValueError: If `states` or `actions' do not have the expected dimensions.
     """
-    lower_states = tf.reshape(
-      lower_states, 
-      [tf.shape(lower_states)[0], tf.shape(lower_states)[1] * tf.shape(lower_states)[2]])
-    lower_actions = tf.reshape(
-      lower_actions, 
-      [tf.shape(lower_actions)[0], tf.shape(lower_actions)[1] * tf.shape(lower_actions)[2]])
-    lower_states = tf.concat([lower_states, states], 1)
+    if self.max_horizon is not None:
+        lower_states = lower_states[:, :self.max_horizon, :]
+        lower_actions = lower_actions[:, :self.max_horizon, :]
+    lower_states = tf.concat([flatten(lower_states), states], 1)
+    lower_actions = flatten(lower_actions)
     return self.upper_agent._critic_net(
       lower_states, lower_actions, for_critic_loss=for_critic_loss)
 
@@ -76,18 +91,20 @@ class ConnectedAgent(object):
         of states.
       actions: A [batch_size, num_action_dims] tensor representing a batch
         of actions.
+      lower_states: A [batch_size, T, num_state_dims] tensor representing a batch
+        of lower level states.
+      lower_actions: A [batch_size, T, num_action_dims] tensor representing a batch
+        of lower level actions.
     Returns:
       q values: A [batch_size] tensor of q values.
     Raises:
       ValueError: If `states` or `actions' do not have the expected dimensions.
     """
-    lower_states = tf.reshape(
-      lower_states, 
-      [tf.shape(lower_states)[0], tf.shape(lower_states)[1] * tf.shape(lower_states)[2]])
-    lower_actions = tf.reshape(
-      lower_actions, 
-      [tf.shape(lower_actions)[0], tf.shape(lower_actions)[1] * tf.shape(lower_actions)[2]])
-    lower_states = tf.concat([lower_states, states], 1)
+    if self.max_horizon is not None:
+        lower_states = lower_states[:, :self.max_horizon, :]
+        lower_actions = lower_actions[:, :self.max_horizon, :]
+    lower_states = tf.concat([flatten(lower_states), states], 1)
+    lower_actions = flatten(lower_actions)
     return tf.stop_gradient(self.upper_agent._target_critic_net(
       lower_states, lower_actions, for_critic_loss=for_critic_loss))
 
@@ -97,29 +114,16 @@ class ConnectedAgent(object):
     Args:
       states: A [batch_size, num_state_dims] tensor representing a batch
         of states.
+      lower_states: A [batch_size, T, num_state_dims] tensor representing a batch
+        of lower level states.
     Returns:
       q values: A [batch_size] tensor of q values.
     """
-    upper_level_actions = self.upper_agent.actor_net(
-        states, stop_gradients=True)
-    lower_level_inputs = tf.concat([
-      lower_states, 
-      tf.tile(
-        upper_level_actions[:, tf.newaxis, :], 
-        [1, tf.shape(lower_states)[1], 1])], 2)
-    lower_level_inputs = tf.reshape(
-      lower_level_inputs, 
-      [tf.shape(lower_states)[0] * tf.shape(lower_states)[1], tf.shape(lower_level_inputs)[2]])
-
-    self.lower_agent._validate_states(lower_level_inputs)
-
-    lower_actions = self.lower_agent.actor_net(
-        lower_level_inputs, stop_gradients=True)
-    lower_actions = tf.reshape(
-      lower_actions, 
-      [tf.shape(lower_states)[0], tf.shape(lower_states)[1], tf.shape(lower_actions)[1]])
+    upper_actions = self.upper_agent.actor_net(states, stop_gradients=True)
+    lower_actions = unbatch(self.lower_agent.actor_net(
+        concat_and_batch(lower_states, upper_actions), stop_gradients=True))
     return self.critic_net(
-      states, upper_level_actions, for_critic_loss=for_critic_loss, 
+      states, upper_actions, for_critic_loss=for_critic_loss, 
       lower_states=lower_states, lower_actions=lower_actions)
 
   def target_value_net(self, states, for_critic_loss=False, lower_states=None):
@@ -128,29 +132,16 @@ class ConnectedAgent(object):
     Args:
       states: A [batch_size, num_state_dims] tensor representing a batch
         of states.
+      lower_states: A [batch_size, T, num_state_dims] tensor representing a batch
+        of lower level states.
     Returns:
       q values: A [batch_size] tensor of q values.
     """
-    upper_level_actions = self.upper_agent.target_actor_net(
-        states)
-    lower_level_inputs = tf.concat([
-      lower_states, 
-      tf.tile(
-        upper_level_actions[:, tf.newaxis, :], 
-        [1, tf.shape(lower_states)[1], 1])], 2)
-    lower_level_inputs = tf.reshape(
-      lower_level_inputs, 
-      [tf.shape(lower_states)[0] * tf.shape(lower_states)[1], tf.shape(lower_level_inputs)[2]])
-
-    self.lower_agent._validate_states(lower_level_inputs)
-
-    lower_actions = self.lower_agent.target_actor_net(
-        lower_level_inputs)
-    lower_actions = tf.reshape(
-      lower_actions, 
-      [tf.shape(lower_states)[0], tf.shape(lower_states)[1], tf.shape(lower_actions)[1]])
+    upper_actions = self.upper_agent.target_actor_net(states)
+    lower_actions = unbatch(self.lower_agent.target_actor_net(
+        concat_and_batch(lower_states, upper_actions)))
     return self.target_critic_net(
-      states, upper_level_actions, for_critic_loss=for_critic_loss,
+      states, upper_actions, for_critic_loss=for_critic_loss,
       lower_states=lower_states, lower_actions=lower_actions)
 
   def critic_loss(self, states, actions, rewards, discounts,
@@ -170,6 +161,12 @@ class ConnectedAgent(object):
         broadcastable to the critic net output.
       next_states: A [batch_size, num_state_dims] tensor representing a batch
         of next states.
+      lower_states: A [batch_size, T, num_state_dims] tensor representing a batch
+        of lower level states.
+      lower_actions: A [batch_size, T, num_action_dims] tensor representing a batch
+        of lower level actions.
+      lower_next_states: A [batch_size, T, num_state_dims] tensor representing a batch
+        of lower level states.
     Returns:
       A rank-0 tensor representing the critic loss.
     Raises:
@@ -222,6 +219,8 @@ class ConnectedAgent(object):
     Args:
       states: A [batch_size, t, num_state_dims] tensor representing a batch
         of states.
+      lower_states: A [batch_size, T, num_state_dims] tensor representing a batch
+        of lower level states.
     Returns:
       A rank-0 tensor representing the actor loss.
     Raises:
@@ -229,28 +228,16 @@ class ConnectedAgent(object):
     """
     self.upper_agent._validate_states(states)
 
-    upper_level_actions = self.upper_agent.actor_net(
+    upper_actions = self.upper_agent.actor_net(
         states, stop_gradients=False)
-    lower_level_inputs = tf.concat([
-      lower_states,
-      tf.tile(upper_level_actions[:, tf.newaxis, :], [1, tf.shape(lower_states)[1], 1])], 2)
-    lower_level_inputs = tf.reshape(
-      lower_level_inputs, 
-      [tf.shape(lower_states)[0] * tf.shape(lower_states)[1], tf.shape(lower_level_inputs)[2]])
-   
-    self.lower_agent._validate_states(lower_level_inputs)
-
-    lower_level_actions = self.lower_agent.actor_net(
-        lower_level_inputs, stop_gradients=False)
-    lower_level_actions = tf.reshape(
-      lower_level_actions, 
-      [tf.shape(lower_states)[0], tf.shape(lower_states)[1], tf.shape(lower_level_actions)[1]])
+    lower_actions = unbatch(self.lower_agent.actor_net(
+        concat_and_batch(lower_states, upper_actions), stop_gradients=False))
     critic_values = self.critic_net(
-      states, upper_level_actions,
-      lower_states=lower_states, lower_actions=lower_level_actions, for_critic_loss=False)
+      states, upper_actions, for_critic_loss=False,
+      lower_states=lower_states, lower_actions=lower_level_actions)
 
     q_values = self.critic_function(critic_values, lower_states)
-    dqda = tf.gradients([q_values], [upper_level_actions])[0]
+    dqda = tf.gradients([q_values], [upper_actions])[0]
     dqda_unclipped = dqda
     if self._dqda_clipping > 0:
       dqda = tf.clip_by_value(dqda, -self._dqda_clipping, self._dqda_clipping)
@@ -267,6 +254,32 @@ class ConnectedAgent(object):
           tf.summary.histogram('dqda_%d' % a, dqda[:, a])
 
     actions_norm *= self._actions_regularizer
-    return slim.losses.mean_squared_error(tf.stop_gradient(dqda + upper_level_actions),
-                                          upper_level_actions,
+    return slim.losses.mean_squared_error(tf.stop_gradient(dqda + upper_actions),
+                                          upper_actions,
                                           scope='actor_loss') + actions_norm
+
+  def __getattr__(self, attr):
+    """A helper function to make this class a wrapper class."""
+    if attr == "upper_agent":
+      return self.__dict__["upper_agent"]
+    if attr == "lower_agent":
+      return self.__dict__["lower_agent"]
+    else:
+      return getattr(self.__dict__["upper_agent"], attr)
+
+  def __setattr__(self, attr, value):
+    """A helper function to make this class a wrapper class."""
+    if attr == "upper_agent":
+      self.__dict__["upper_agent"] = value
+    if attr == "lower_agent":
+      self.__dict__["lower_agent"] = value
+    else:
+      setattr(self.__dict__["upper_agent"], attr, value)
+
+  def __getstate__(self):
+    """A helper function to make this class a wrapper class."""
+    return self.__dict__
+
+  def __setstate__(self, state):
+    """A helper function to make this class a wrapper class."""
+    self.__dict__.update(state)
