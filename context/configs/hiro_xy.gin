@@ -12,3 +12,4 @@ META_EXPLORE_NOISE = 1.0
 
 uvf/negative_distance.summarize = False
 uvf/negative_distance.relative_context = True
+train_uvf.use_connected_policies = False
