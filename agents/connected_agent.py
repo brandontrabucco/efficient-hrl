@@ -317,7 +317,11 @@ class ConnectedAgent(object):
 
     upper_actions = self.upper_agent.actor_net(
         states, stop_gradients=False)
-    lower_actions = unbatch(self.lower_agent.actor_net(
+    if self.use_dynamics_for_bellman_update:
+      lower_states, lower_actions = self.unroll_dynamics(
+        lower_states[:, 0, :], upper_actions, tf.shape(lower_states)[1], stop_gradients=False)
+    else:
+      lower_actions = unbatch(self.lower_agent.actor_net(
         concat_and_batch(lower_states, upper_actions), stop_gradients=False), tf.shape(lower_states)[1])
     critic_values = self.critic_net(
       states, upper_actions, for_critic_loss=False,
