@@ -37,6 +37,7 @@ from agents.connected_agent import ConnectedAgent
 from agents import circular_buffer
 from utils import utils as uvf_utils
 from environments import create_maze_env
+import multiprocessing as m
 # pylint: enable=unused-import
 
 
@@ -287,17 +288,39 @@ def sample_best_meta_actions(state_reprs, next_state_reprs, prev_meta_actions,
   return actions
 
 
+def predict_ground_truth_dynamics(environment, x):
+  """Query a ground truth dynamics model in the provided environment."""
+  state, action = x
+  environment.reset()
+  environment.set_obs(state)
+  return environment.step(action)[0]
+
+
+def ground_truth_dynamics_process(environment, input_queue, output_queue):
+    """Process to run ground truth dynamics models."""
+    while True:
+        output_queue.put(predict_ground_truth_dynamics(environment, input_queue.get()))
+
+
+def start_ground_truth_dynamics_process(environment, input_queue, output_queue):
+    """Process to run ground truth dynamics models."""
+    m.Process(target=ground_truth_dynamics_process, args=(
+        environment, input_queue, output_queue)).start()
+
+
 @gin.configurable
-def create_ground_truth_dynamics(environment=None):
+def create_ground_truth_dynamics(environment=None, max_cores=24):
   """Creates an oracle dynamics model function to process batches of states and actions."""
+  input_queue, output_queue = m.Queue(), m.Queue()
+  for i in range(max_cores):
+    start_ground_truth_dynamics_process(environment.gym, input_queue, output_queue)
   def ground_truth_dynamics(np_states, np_actions):
-    np_next_states = np.zeros_like(np_states)
-    for idx in range(np_states.shape[0]):
-      environment.gym.set_obs(np_states[idx, :])
-      np_next_states[idx, :] = environment.gym.step(np_actions[idx, :])[0]
-    return np_next_states
+    batch_size = np_states.shape[0]
+    for idx in range(batch_size):
+      input_queue.put((np_states[idx, :], np_actions[idx, :]))
+    return np.array([output_queue.get() for idx in range(batch_size)]).astype(np_states.dtype)
   return lambda tf_states, tf_actions: tf.numpy_function(
-    ground_truth_dynamics, [tf_states, tf_actions], tf.float32)
+    ground_truth_dynamics, [tf_states, tf_actions], tf_states.dtype)
 
 
 @gin.configurable

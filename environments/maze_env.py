@@ -21,6 +21,7 @@ import xml.etree.ElementTree as ET
 import math
 import numpy as np
 import gym
+from gym import utils
 
 from environments import maze_env_utils
 
@@ -28,7 +29,7 @@ from environments import maze_env_utils
 MODEL_DIR = 'environments/assets'
 
 
-class MazeEnv(gym.Env):
+class MazeEnv(gym.Env, utils.EzPickle):
   MODEL_CLASS = None
 
   MAZE_HEIGHT = None
@@ -232,6 +233,20 @@ class MazeEnv(gym.Env):
     tree.write(file_path)
 
     self.wrapped_env = model_cls(*args, file_path=file_path, **kwargs)
+    utils.EzPickle.__init__(
+        self,
+        maze_id=maze_id,
+        maze_height=maze_height,
+        maze_size_scaling=maze_size_scaling,
+        n_bins=n_bins,
+        sensor_range=sensor_range,
+        sensor_span=sensor_span,
+        observe_blocks=observe_blocks,
+        put_spin_near_agent=put_spin_near_agent,
+        top_down_view=top_down_view,
+        manual_collision=manual_collision,
+        *args,
+        **kwargs)
 
   def get_ori(self):
     return self.wrapped_env.get_ori()

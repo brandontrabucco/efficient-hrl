@@ -47,7 +47,8 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     self._body_comvel_indices = {}
 
     mujoco_env.MujocoEnv.__init__(self, file_path, 5)
-    utils.EzPickle.__init__(self)
+    utils.EzPickle.__init__(self, file_path=file_path, expose_all_qpos=expose_all_qpos,
+      expose_body_coms=expose_body_coms, expose_body_comvels=expose_body_comvels)
 
   @property
   def physics(self):
