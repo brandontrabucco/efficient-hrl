@@ -423,6 +423,9 @@ class MazeEnv(gym.Env):
                            range_sensor_obs.flat] +
                            view + [[self.t * 0.001]])
 
+  def set_obs(self, obs):
+    self.wrapped_env.set_obs(obs)
+
   def reset(self):
     self.t = 0
     self.trajectory = []

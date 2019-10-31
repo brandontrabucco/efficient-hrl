@@ -39,7 +39,6 @@ def unbatch(x, size):
   return tf.reshape(x, [tf.shape(x)[0] // size, size, tf.shape(x)[1]])
 
 
-@gin.configurable
 class ConnectedAgent(object):
   """An RL agent that learns using the Connected Policy algorithm."""
 
@@ -65,7 +64,7 @@ class ConnectedAgent(object):
     self.dynamics_function = dynamics_function
     self.use_dynamics_for_bellman_update = use_dynamics_for_bellman_update
 
-  def unroll_dynamics(self, initial_states, upper_actions, T, stop_gradients=False):
+  def unroll_dynamics(self, initial_states, upper_actions, stop_gradients=False):
     """Predicts into the future using the dynamics and the policy.
 
     Args:
@@ -73,7 +72,6 @@ class ConnectedAgent(object):
         of initial states, without the environment goal.
       upper_actions: A [batch_size, num_action_dims] tensor representing a batch
         of upper level actions.
-      T: An int32 Tensor, the length to predict states over.
     Returns:
       lower_states: A [batch_size, T, num_state_dims] tensor representing a batch
         of lower level states.
@@ -85,7 +83,7 @@ class ConnectedAgent(object):
     def predict_body(iteration, s_t, state_array, action_array, lower_goal, time):
       a_t = self.lower_agent.actor_net(tf.concat([s_t, lower_goal], 1), stop_gradients=stop_gradients)
       return (tf.add(iteration, 1),
-              self.dynamics_function(s_t, a_t),
+              tf.reshape(self.dynamics_function(s_t, a_t), tf.shape(s_t)),
               state_array.write(iteration, s_t),
               action_array.write(iteration, a_t),
               lower_goal,
@@ -95,14 +93,17 @@ class ConnectedAgent(object):
       predict_body, [
         tf.constant(0),
         initial_states,
-        tf.TensorArray(tf.float32, T),
-        tf.TensorArray(tf.float32, T),
+        tf.TensorArray(tf.float32, self.max_horizon),
+        tf.TensorArray(tf.float32, self.max_horizon),
         upper_actions,
-        T])
-    return (tf.transpose(prediction[2].stack(), [0, 1]),
-            tf.transpose(prediction[3].stack(), [0, 1]))
+        self.max_horizon])
+    lower_states = tf.transpose(prediction[2].stack(), [1, 0, 2])
+    lower_actions = tf.transpose(prediction[3].stack(), [1, 0, 2])
+    lower_states = tf.reshape(lower_states, [lower_states.shape[0], self.max_horizon, lower_states.shape[2]])
+    lower_actions = tf.reshape(lower_actions, [lower_actions.shape[0], self.max_horizon, lower_actions.shape[2]])
+    return lower_states, lower_actions
 
-  def unroll_target_dynamics(self, initial_states, upper_actions, T):
+  def unroll_target_dynamics(self, initial_states, upper_actions):
     """Predicts into the future using the dynamics and the target policy.
 
     Args:
@@ -110,7 +111,6 @@ class ConnectedAgent(object):
         of initial states, without the environment goal.
       upper_actions: A [batch_size, num_action_dims] tensor representing a batch
         of upper level actions.
-      T: An int32 Tensor, the length to predict states over.
     Returns:
       lower_states: A [batch_size, T, num_state_dims] tensor representing a batch
         of lower level states.
@@ -122,7 +122,7 @@ class ConnectedAgent(object):
     def predict_body(iteration, s_t, state_array, action_array, lower_goal, time):
       a_t = self.lower_agent.target_actor_net(tf.concat([s_t, lower_goal], 1))
       return (tf.add(iteration, 1),
-              self.dynamics_function(s_t, a_t),
+              tf.reshape(self.dynamics_function(s_t, a_t), tf.shape(s_t)),
               state_array.write(iteration, s_t),
               action_array.write(iteration, a_t),
               lower_goal,
@@ -132,12 +132,15 @@ class ConnectedAgent(object):
       predict_body, [
         tf.constant(0),
         initial_states,
-        tf.TensorArray(tf.float32, T),
-        tf.TensorArray(tf.float32, T),
+        tf.TensorArray(tf.float32, self.max_horizon),
+        tf.TensorArray(tf.float32, self.max_horizon),
         upper_actions,
-        T])
-    return (tf.transpose(prediction[2].stack(), [0, 1]),
-            tf.transpose(prediction[3].stack(), [0, 1]))
+        self.max_horizon])
+    lower_states = tf.transpose(prediction[2].stack(), [1, 0, 2])
+    lower_actions = tf.transpose(prediction[3].stack(), [1, 0, 2])
+    lower_states = tf.reshape(lower_states, [lower_states.shape[0], self.max_horizon, lower_states.shape[2]])
+    lower_actions = tf.reshape(lower_actions, [lower_actions.shape[0], self.max_horizon, lower_actions.shape[2]])
+    return lower_states, lower_actions
 
   def critic_net(self, states, actions, for_critic_loss=False, 
                  lower_states=None, lower_actions=None):
@@ -201,7 +204,7 @@ class ConnectedAgent(object):
     upper_actions = self.upper_agent.actor_net(states, stop_gradients=True)
     if self.use_dynamics_for_bellman_update:
       lower_states, lower_actions = self.unroll_dynamics(
-        lower_states[:, 0, :], upper_actions, tf.shape(lower_states)[1], stop_gradients=True)
+        lower_states[:, 0, :], upper_actions, stop_gradients=True)
     else:
       lower_actions = unbatch(self.lower_agent.actor_net(
         concat_and_batch(lower_states, upper_actions), stop_gradients=True), tf.shape(lower_states)[1])
@@ -223,7 +226,7 @@ class ConnectedAgent(object):
     upper_actions = self.upper_agent.target_actor_net(states)
     if self.use_dynamics_for_bellman_update:
       lower_states, lower_actions = self.unroll_target_dynamics(
-        lower_states[:, 0, :], upper_actions, tf.shape(lower_states)[1])
+        lower_states[:, 0, :], upper_actions)
     else:
       lower_actions = unbatch(self.lower_agent.target_actor_net(
         concat_and_batch(lower_states, upper_actions)), tf.shape(lower_states)[1])
@@ -319,7 +322,7 @@ class ConnectedAgent(object):
         states, stop_gradients=False)
     if self.use_dynamics_for_bellman_update:
       lower_states, lower_actions = self.unroll_dynamics(
-        lower_states[:, 0, :], upper_actions, tf.shape(lower_states)[1], stop_gradients=False)
+        lower_states[:, 0, :], upper_actions, stop_gradients=False)
     else:
       lower_actions = unbatch(self.lower_agent.actor_net(
         concat_and_batch(lower_states, upper_actions), stop_gradients=False), tf.shape(lower_states)[1])

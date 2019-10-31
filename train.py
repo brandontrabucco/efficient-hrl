@@ -293,8 +293,8 @@ def create_ground_truth_dynamics(environment=None):
   def ground_truth_dynamics(np_states, np_actions):
     np_next_states = np.zeros_like(np_states)
     for idx in range(np_states.shape[0]):
-      environment.set_obs(np_states[idx, :])
-      np_next_states[idx, :] = environment.step(np_actions[idx, :])[0]
+      environment.gym.set_obs(np_states[idx, :])
+      np_next_states[idx, :] = environment.gym.step(np_actions[idx, :])[0]
     return np_next_states
   return lambda tf_states, tf_actions: tf.numpy_function(
     ground_truth_dynamics, [tf_states, tf_actions], tf.float32)
