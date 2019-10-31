@@ -50,3 +50,5 @@ meta_actor/AdamOptimizer.beta2 = 0.999
 repr/AdamOptimizer.learning_rate = 0.0001
 repr/AdamOptimizer.beta1 = 0.9
 repr/AdamOptimizer.beta2 = 0.999
+
+create_ground_truth_dynamics.environment = @create_maze_env()

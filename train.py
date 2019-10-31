@@ -22,6 +22,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import numpy as np
+import pickle as pkl
 import os
 import time
 import tensorflow as tf
@@ -286,6 +288,19 @@ def sample_best_meta_actions(state_reprs, next_state_reprs, prev_meta_actions,
 
 
 @gin.configurable
+def create_ground_truth_dynamics(environment=None):
+  """Creates an oracle dynamics model function to process batches of states and actions."""
+  def ground_truth_dynamics(np_states, np_actions):
+    np_next_states = np.zeros_like(np_states)
+    for idx in range(np_states.shape[0]):
+      environment.set_obs(np_states[idx, :])
+      np_next_states[idx, :] = environment.step(np_actions[idx, :])[0]
+    return np_next_states
+  return lambda tf_states, tf_actions: tf.numpy_function(
+    ground_truth_dynamics, [tf_states, tf_actions], tf.float32)
+
+
+@gin.configurable
 def train_uvf(train_dir,
               environment=None,
               num_bin_actions=3,
@@ -335,7 +350,9 @@ def train_uvf(train_dir,
               max_policies_to_save=None,
               max_steps_per_episode=None,
               load_path=LOAD_PATH,
-              use_connected_policies=False):
+              use_connected_policies=False,
+              max_critic_horizon=10,
+              use_dynamics_for_bellman_update=False):
   """Train an agent."""
   tf_env = create_maze_env.TFPyEnvironment(environment)
   observation_spec = [tf_env.observation_spec()]
@@ -372,7 +389,12 @@ def train_uvf(train_dir,
     uvf_agent.set_replay(replay=replay_buffer)
 
   if use_connected_policies:
-      meta_agent = ConnectedAgent(meta_agent, uvf_agent)
+    meta_agent = ConnectedAgent(
+        meta_agent,
+        uvf_agent,
+        max_critic_horizon,
+        create_ground_truth_dynamics(),
+        use_dynamics_for_bellman_update)
 
   with tf.variable_scope('state_preprocess'):
     state_preprocess = state_preprocess_class()

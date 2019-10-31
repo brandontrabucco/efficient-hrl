@@ -1,6 +1,10 @@
+"""Copyright 2019, Brandon Trabucco and Glen Berseth."""
+
+
 import tensorflow as tf
 slim = tf.contrib.slim
 import gin.tf
+from agents.ddpg_agent import gen_debug_td_error_summaries
 
 
 def flatten(x):
@@ -42,23 +46,27 @@ class ConnectedAgent(object):
   def __init__(self,
                upper_agent,
                lower_agent,
-               max_horizon=None,
-               dynamics_function=None):
+               max_horizon,
+               dynamics_function,
+               use_dynamics_for_bellman_update):
     """Constructs a Connected Policy agent.
 
     Args:
       upper_agent: a pointer to an existing upper level (meta) agent.
       lower_agent: a pointer to an existing lower level agent.
-      max_horizon: an integer (optional) for max number of q inputs in time.
-      dynamics_function: a TF function (optional) that predicts future states given (s_t, a_t).
+      max_horizon: an integer for max number of q inputs in time.
+      dynamics_function: a TF function that predicts future states given (s_t, a_t).
+      use_dynamics_for_bellman_update: a boolean that specifies to sample next lower
+        states using the dynamics function.
     """
     self.upper_agent = upper_agent
     self.lower_agent = lower_agent
     self.max_horizon = max_horizon
     self.dynamics_function = dynamics_function
+    self.use_dynamics_for_bellman_update = use_dynamics_for_bellman_update
 
-  def unroll_dynamics(self, initial_states, upper_actions, T, stop_gradient=False):
-    """Returns the output of the critic network.
+  def unroll_dynamics(self, initial_states, upper_actions, T, stop_gradients=False):
+    """Predicts into the future using the dynamics and the policy.
 
     Args:
       initial_states: A [batch_size, num_state_dims] tensor representing a batch
@@ -75,7 +83,44 @@ class ConnectedAgent(object):
       ValueError: If `states` or `actions' do not have the expected dimensions.
     """
     def predict_body(iteration, s_t, state_array, action_array, lower_goal, time):
-      a_t = self.lower_agent.actor_net(tf.concat([s_t, lower_goal], 1), stop_gradient=stop_gradient)
+      a_t = self.lower_agent.actor_net(tf.concat([s_t, lower_goal], 1), stop_gradients=stop_gradients)
+      return (tf.add(iteration, 1),
+              self.dynamics_function(s_t, a_t),
+              state_array.write(iteration, s_t),
+              action_array.write(iteration, a_t),
+              lower_goal,
+              time)
+    prediction = tf.while_loop(
+      lambda iteration, s_t, state_array, action_array, lower_goal, time: tf.less(iteration, time),
+      predict_body, [
+        tf.constant(0),
+        initial_states,
+        tf.TensorArray(tf.float32, T),
+        tf.TensorArray(tf.float32, T),
+        upper_actions,
+        T])
+    return (tf.transpose(prediction[2].stack(), [0, 1]),
+            tf.transpose(prediction[3].stack(), [0, 1]))
+
+  def unroll_target_dynamics(self, initial_states, upper_actions, T):
+    """Predicts into the future using the dynamics and the target policy.
+
+    Args:
+      initial_states: A [batch_size, num_state_dims] tensor representing a batch
+        of initial states, without the environment goal.
+      upper_actions: A [batch_size, num_action_dims] tensor representing a batch
+        of upper level actions.
+      T: An int32 Tensor, the length to predict states over.
+    Returns:
+      lower_states: A [batch_size, T, num_state_dims] tensor representing a batch
+        of lower level states.
+      lower_actions: A [batch_size, T, num_action_dims] tensor representing a batch
+        of lower level actions.
+    Raises:
+      ValueError: If `states` or `actions' do not have the expected dimensions.
+    """
+    def predict_body(iteration, s_t, state_array, action_array, lower_goal, time):
+      a_t = self.lower_agent.target_actor_net(tf.concat([s_t, lower_goal], 1))
       return (tf.add(iteration, 1),
               self.dynamics_function(s_t, a_t),
               state_array.write(iteration, s_t),
@@ -112,11 +157,8 @@ class ConnectedAgent(object):
     Raises:
       ValueError: If `states` or `actions' do not have the expected dimensions.
     """
-    if self.max_horizon is not None:
-      lower_states = lower_states[:, :self.max_horizon, :]
-      lower_actions = lower_actions[:, :self.max_horizon, :]
-    lower_states = tf.concat([flatten(lower_states), states], 1)
-    lower_actions = flatten(lower_actions)
+    lower_states = tf.concat([flatten(lower_states[:, :self.max_horizon, :]), states], 1)
+    lower_actions = flatten(lower_actions[:, :self.max_horizon, :])
     return self.upper_agent._critic_net(
       lower_states, lower_actions, for_critic_loss=for_critic_loss)
 
@@ -140,11 +182,8 @@ class ConnectedAgent(object):
     Raises:
       ValueError: If `states` or `actions' do not have the expected dimensions.
     """
-    if self.max_horizon is not None:
-      lower_states = lower_states[:, :self.max_horizon, :]
-      lower_actions = lower_actions[:, :self.max_horizon, :]
-    lower_states = tf.concat([flatten(lower_states), states], 1)
-    lower_actions = flatten(lower_actions)
+    lower_states = tf.concat([flatten(lower_states[:, :self.max_horizon, :]), states], 1)
+    lower_actions = flatten(lower_actions[:, :self.max_horizon, :])
     return tf.stop_gradient(self.upper_agent._target_critic_net(
       lower_states, lower_actions, for_critic_loss=for_critic_loss))
 
@@ -160,7 +199,11 @@ class ConnectedAgent(object):
       q values: A [batch_size] tensor of q values.
     """
     upper_actions = self.upper_agent.actor_net(states, stop_gradients=True)
-    lower_actions = unbatch(self.lower_agent.actor_net(
+    if self.use_dynamics_for_bellman_update:
+      lower_states, lower_actions = self.unroll_dynamics(
+        lower_states[:, 0, :], upper_actions, tf.shape(lower_states)[1], stop_gradients=True)
+    else:
+      lower_actions = unbatch(self.lower_agent.actor_net(
         concat_and_batch(lower_states, upper_actions), stop_gradients=True), tf.shape(lower_states)[1])
     return self.critic_net(
       states, upper_actions, for_critic_loss=for_critic_loss, 
@@ -178,7 +221,11 @@ class ConnectedAgent(object):
       q values: A [batch_size] tensor of q values.
     """
     upper_actions = self.upper_agent.target_actor_net(states)
-    lower_actions = unbatch(self.lower_agent.target_actor_net(
+    if self.use_dynamics_for_bellman_update:
+      lower_states, lower_actions = self.unroll_target_dynamics(
+        lower_states[:, 0, :], upper_actions, tf.shape(lower_states)[1])
+    else:
+      lower_actions = unbatch(self.lower_agent.target_actor_net(
         concat_and_batch(lower_states, upper_actions)), tf.shape(lower_states)[1])
     return self.target_critic_net(
       states, upper_actions, for_critic_loss=for_critic_loss,
@@ -288,7 +335,7 @@ class ConnectedAgent(object):
         tf.summary.scalar('actions_norm', actions_norm)
         tf.summary.histogram('dqda', dqda)
         tf.summary.histogram('dqda_unclipped', dqda_unclipped)
-        tf.summary.histogram('actions', actions)
+        tf.summary.histogram('actions', upper_actions)
         for a in range(self._num_action_dims):
           tf.summary.histogram('dqda_unclipped_%d' % a, dqda_unclipped[:, a])
           tf.summary.histogram('dqda_%d' % a, dqda[:, a])
