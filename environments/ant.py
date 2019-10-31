@@ -108,6 +108,17 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         obs = np.concatenate([obs, comvel])
     return obs
 
+  def set_obs(self, obs):
+    qpos = np.copy(self.physics.data.qpos)
+    qvel = np.copy(self.physics.data.qvel)
+    if self._expose_all_qpos:
+      qpos[:15] = obs[:15]
+      qvel[:14] = obs[15:15 + 14]
+    else:
+      qpos[2:15] = obs[:13]
+      qvel[:14] = obs[13:13 + 14]
+    self.set_state(qpos, qvel)
+
   def reset_model(self):
     qpos = self.init_qpos + self.np_random.uniform(
         size=self.model.nq, low=-.1, high=.1)

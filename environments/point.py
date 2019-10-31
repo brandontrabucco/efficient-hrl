@@ -75,6 +75,17 @@ class PointEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         self.physics.data.qpos.flat[2:3],
         self.physics.data.qvel.flat[:3]])
 
+  def set_obs(self, obs):
+    qpos = np.copy(self.physics.data.qpos)
+    qvel = np.copy(self.physics.data.qvel)
+    if self._expose_all_qpos:
+      qpos[:3] = obs[:3]
+      qvel[:3] = obs[3:3 + 3]
+    else:
+      qpos[2:3] = obs[:1]
+      qvel[:3] = obs[1:1 + 3]
+    self.set_state(qpos, qvel)
+
   def reset_model(self):
     qpos = self.init_qpos + self.np_random.uniform(
         size=self.physics.model.nq, low=-.1, high=.1)

@@ -42,17 +42,57 @@ class ConnectedAgent(object):
   def __init__(self,
                upper_agent,
                lower_agent,
-               max_horizon=None):
+               max_horizon=None,
+               dynamics_function=None):
     """Constructs a Connected Policy agent.
 
     Args:
       upper_agent: a pointer to an existing upper level (meta) agent.
       lower_agent: a pointer to an existing lower level agent.
       max_horizon: an integer (optional) for max number of q inputs in time.
+      dynamics_function: a TF function (optional) that predicts future states given (s_t, a_t).
     """
     self.upper_agent = upper_agent
     self.lower_agent = lower_agent
     self.max_horizon = max_horizon
+    self.dynamics_function = dynamics_function
+
+  def unroll_dynamics(self, initial_states, upper_actions, T, stop_gradient=False):
+    """Returns the output of the critic network.
+
+    Args:
+      initial_states: A [batch_size, num_state_dims] tensor representing a batch
+        of initial states, without the environment goal.
+      upper_actions: A [batch_size, num_action_dims] tensor representing a batch
+        of upper level actions.
+      T: An int32 Tensor, the length to predict states over.
+    Returns:
+      lower_states: A [batch_size, T, num_state_dims] tensor representing a batch
+        of lower level states.
+      lower_actions: A [batch_size, T, num_action_dims] tensor representing a batch
+        of lower level actions.
+    Raises:
+      ValueError: If `states` or `actions' do not have the expected dimensions.
+    """
+    def predict_body(iteration, s_t, state_array, action_array, lower_goal, time):
+      a_t = self.lower_agent.actor_net(tf.concat([s_t, lower_goal], 1), stop_gradient=stop_gradient)
+      return (tf.add(iteration, 1),
+              self.dynamics_function(s_t, a_t),
+              state_array.write(iteration, s_t),
+              action_array.write(iteration, a_t),
+              lower_goal,
+              time)
+    prediction = tf.while_loop(
+      lambda iteration, s_t, state_array, action_array, lower_goal, time: tf.less(iteration, time),
+      predict_body, [
+        tf.constant(0),
+        initial_states,
+        tf.TensorArray(tf.float32, T),
+        tf.TensorArray(tf.float32, T),
+        upper_actions,
+        T])
+    return (tf.transpose(prediction[2].stack(), [0, 1]),
+            tf.transpose(prediction[3].stack(), [0, 1]))
 
   def critic_net(self, states, actions, for_critic_loss=False, 
                  lower_states=None, lower_actions=None):
@@ -73,8 +113,8 @@ class ConnectedAgent(object):
       ValueError: If `states` or `actions' do not have the expected dimensions.
     """
     if self.max_horizon is not None:
-        lower_states = lower_states[:, :self.max_horizon, :]
-        lower_actions = lower_actions[:, :self.max_horizon, :]
+      lower_states = lower_states[:, :self.max_horizon, :]
+      lower_actions = lower_actions[:, :self.max_horizon, :]
     lower_states = tf.concat([flatten(lower_states), states], 1)
     lower_actions = flatten(lower_actions)
     return self.upper_agent._critic_net(
@@ -101,8 +141,8 @@ class ConnectedAgent(object):
       ValueError: If `states` or `actions' do not have the expected dimensions.
     """
     if self.max_horizon is not None:
-        lower_states = lower_states[:, :self.max_horizon, :]
-        lower_actions = lower_actions[:, :self.max_horizon, :]
+      lower_states = lower_states[:, :self.max_horizon, :]
+      lower_actions = lower_actions[:, :self.max_horizon, :]
     lower_states = tf.concat([flatten(lower_states), states], 1)
     lower_actions = flatten(lower_actions)
     return tf.stop_gradient(self.upper_agent._target_critic_net(
