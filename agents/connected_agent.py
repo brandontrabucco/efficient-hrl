@@ -162,8 +162,8 @@ class ConnectedAgent(object):
     Raises:
       ValueError: If `states` or `actions' do not have the expected dimensions.
     """
-    lower_states = tf.concat([flatten(lower_states), states], 1)
-    lower_actions = flatten(lower_actions)
+    lower_states = tf.concat([flatten(lower_states[:, :self.max_horizon, :]), states], 1)
+    lower_actions = flatten(lower_actions[:, :self.max_horizon, :])
     return self.upper_agent._critic_net(
       lower_states, lower_actions, for_critic_loss=for_critic_loss)
 
@@ -187,8 +187,8 @@ class ConnectedAgent(object):
     Raises:
       ValueError: If `states` or `actions' do not have the expected dimensions.
     """
-    lower_states = tf.concat([flatten(lower_states), states], 1)
-    lower_actions = flatten(lower_actions)
+    lower_states = tf.concat([flatten(lower_states[:, :self.max_horizon, :]), states], 1)
+    lower_actions = flatten(lower_actions[:, :self.max_horizon, :])
     return tf.stop_gradient(self.upper_agent._target_critic_net(
       lower_states, lower_actions, for_critic_loss=for_critic_loss))
 
