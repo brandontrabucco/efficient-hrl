@@ -204,6 +204,8 @@ class ConnectedAgent(object):
       q values: A [batch_size] tensor of q values.
     """
     upper_actions = self.upper_agent.actor_net(states, stop_gradients=True)
+    lower_states = lower_states[:, :self.max_horizon, :]
+
     dynamics_lower_states, dynamics_lower_actions = self.unroll_dynamics(
       lower_states[:, 0, :], upper_actions, stop_gradients=True)
     lower_actions = unbatch(self.lower_agent.actor_net(
@@ -213,9 +215,9 @@ class ConnectedAgent(object):
       [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability
 
     lower_states = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states[:, :self.max_horizon, :])
+      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
     lower_actions = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions[:, :self.max_horizon, :])
+      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions)
 
     return self.critic_net(
       states, upper_actions, for_critic_loss=for_critic_loss, 
@@ -233,6 +235,8 @@ class ConnectedAgent(object):
       q values: A [batch_size] tensor of q values.
     """
     upper_actions = self.upper_agent.target_actor_net(states)
+    lower_states = lower_states[:, :self.max_horizon, :]
+
     dynamics_lower_states, dynamics_lower_actions = self.unroll_target_dynamics(
       lower_states[:, 0, :], upper_actions)
     lower_actions = unbatch(self.lower_agent.target_actor_net(
@@ -242,9 +246,9 @@ class ConnectedAgent(object):
       [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability
 
     lower_states = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states[:, :self.max_horizon, :])
+      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
     lower_actions = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions[:, :self.max_horizon, :])
+      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions)
 
     return self.target_critic_net(
       states, upper_actions, for_critic_loss=for_critic_loss,
@@ -333,6 +337,7 @@ class ConnectedAgent(object):
       ValueError: If `states` does not have the expected dimensions.
     """
     self.upper_agent._validate_states(states)
+    lower_states = lower_states[:, :self.max_horizon, :]
 
     upper_actions = self.upper_agent.actor_net(states, stop_gradients=True)
     dynamics_lower_states, dynamics_lower_actions = self.unroll_dynamics(
@@ -344,9 +349,9 @@ class ConnectedAgent(object):
       [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability
 
     lower_states = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states[:, :self.max_horizon, :])
+      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
     lower_actions = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions[:, :self.max_horizon, :])
+      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions)
 
     critic_values = self.critic_net(
       states, upper_actions, for_critic_loss=False,
