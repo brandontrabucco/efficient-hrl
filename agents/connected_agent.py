@@ -82,11 +82,12 @@ class ConnectedAgent(object):
     """
     def predict_body(iteration, s_t, state_array, action_array, lower_goal, time):
       a_t = self.lower_agent.actor_net(tf.concat([s_t, lower_goal], 1), stop_gradients=stop_gradients)
+      s_t_plus_one = tf.reshape(self.dynamics_function(s_t, a_t), tf.shape(s_t))
       return (tf.add(iteration, 1),
-              tf.reshape(self.dynamics_function(s_t, a_t), tf.shape(s_t)),
+              s_t_plus_one,
               state_array.write(iteration, s_t),
               action_array.write(iteration, a_t),
-              lower_goal,
+              lower_goal - (s_t_plus_one - s_t),
               time)
     prediction = tf.while_loop(
       lambda iteration, s_t, state_array, action_array, lower_goal, time: tf.less(iteration, time),
@@ -121,11 +122,12 @@ class ConnectedAgent(object):
     """
     def predict_body(iteration, s_t, state_array, action_array, lower_goal, time):
       a_t = self.lower_agent.target_actor_net(tf.concat([s_t, lower_goal], 1))
+      s_t_plus_one = tf.reshape(self.dynamics_function(s_t, a_t), tf.shape(s_t))
       return (tf.add(iteration, 1),
-              tf.reshape(self.dynamics_function(s_t, a_t), tf.shape(s_t)),
+              s_t_plus_one,
               state_array.write(iteration, s_t),
               action_array.write(iteration, a_t),
-              lower_goal,
+              lower_goal - (s_t_plus_one - s_t),
               time)
     prediction = tf.while_loop(
       lambda iteration, s_t, state_array, action_array, lower_goal, time: tf.less(iteration, time),
