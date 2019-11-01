@@ -235,7 +235,7 @@ class ConnectedAgent(object):
     upper_actions = self.upper_agent.target_actor_net(states)
     dynamics_lower_states, dynamics_lower_actions = self.unroll_target_dynamics(
       lower_states[:, 0, :], upper_actions)
-    lower_actions = unbatch(self.lower_agent.actor_target_net(
+    lower_actions = unbatch(self.lower_agent.target_actor_net(
       concat_and_batch(lower_states, upper_actions)), tf.shape(lower_states)[1])
 
     relabel_mask = tf.cast(tf.random.uniform(
