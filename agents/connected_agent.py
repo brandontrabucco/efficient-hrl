@@ -209,8 +209,8 @@ class ConnectedAgent(object):
     lower_actions = unbatch(self.lower_agent.actor_net(
       concat_and_batch(lower_states, upper_actions), stop_gradients=True), tf.shape(lower_states)[1])
 
-    relabel_mask = tf.cast(tf.random.uniform(
-      [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability, tf.float32)
+    relabel_mask = tf.random.uniform(
+      [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability
 
     lower_states = tf.where(tf.broadcast_to(
       relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
@@ -238,8 +238,8 @@ class ConnectedAgent(object):
     lower_actions = unbatch(self.lower_agent.target_actor_net(
       concat_and_batch(lower_states, upper_actions)), tf.shape(lower_states)[1])
 
-    relabel_mask = tf.cast(tf.random.uniform(
-      [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability, tf.float32)
+    relabel_mask = tf.random.uniform(
+      [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability
 
     lower_states = tf.where(tf.broadcast_to(
       relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
@@ -340,8 +340,8 @@ class ConnectedAgent(object):
     lower_actions = unbatch(self.lower_agent.actor_net(
       concat_and_batch(lower_states, upper_actions), stop_gradients=True), tf.shape(lower_states)[1])
 
-    relabel_mask = tf.cast(tf.random.uniform(
-      [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability, tf.float32)
+    relabel_mask = tf.random.uniform(
+      [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability
 
     lower_states = tf.where(tf.broadcast_to(
       relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
