@@ -1,4 +1,4 @@
-To train with centralized policies, run the following.
+To train with centralized policies, run the following command.
 
 ```
 python scripts/local_train.py connected_policies_full connected_policies_full ant_maze base_uvf suite
