@@ -162,8 +162,8 @@ class ConnectedAgent(object):
     Raises:
       ValueError: If `states` or `actions' do not have the expected dimensions.
     """
-    lower_states = tf.concat([flatten(lower_states[:, :self.max_horizon, :]), states], 1)
-    lower_actions = flatten(lower_actions[:, :self.max_horizon, :])
+    lower_states = tf.concat([flatten(lower_states), states], 1)
+    lower_actions = flatten(lower_actions)
     return self.upper_agent._critic_net(
       lower_states, lower_actions, for_critic_loss=for_critic_loss)
 
@@ -187,8 +187,8 @@ class ConnectedAgent(object):
     Raises:
       ValueError: If `states` or `actions' do not have the expected dimensions.
     """
-    lower_states = tf.concat([flatten(lower_states[:, :self.max_horizon, :]), states], 1)
-    lower_actions = flatten(lower_actions[:, :self.max_horizon, :])
+    lower_states = tf.concat([flatten(lower_states), states], 1)
+    lower_actions = flatten(lower_actions)
     return tf.stop_gradient(self.upper_agent._target_critic_net(
       lower_states, lower_actions, for_critic_loss=for_critic_loss))
 
@@ -213,9 +213,9 @@ class ConnectedAgent(object):
       [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability
 
     lower_states = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
+      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states[:, :self.max_horizon, :])
     lower_actions = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions)
+      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions[:, :self.max_horizon, :])
 
     return self.critic_net(
       states, upper_actions, for_critic_loss=for_critic_loss, 
@@ -242,9 +242,9 @@ class ConnectedAgent(object):
       [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability
 
     lower_states = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
+      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states[:, :self.max_horizon, :])
     lower_actions = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions)
+      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions[:, :self.max_horizon, :])
 
     return self.target_critic_net(
       states, upper_actions, for_critic_loss=for_critic_loss,
@@ -344,9 +344,9 @@ class ConnectedAgent(object):
       [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability
 
     lower_states = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
+      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states[:, :self.max_horizon, :])
     lower_actions = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions)
+      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions[:, :self.max_horizon, :])
 
     critic_values = self.critic_net(
       states, upper_actions, for_critic_loss=False,
