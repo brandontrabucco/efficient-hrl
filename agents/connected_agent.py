@@ -87,7 +87,7 @@ class ConnectedAgent(object):
               s_t_plus_one,
               state_array.write(iteration, s_t),
               action_array.write(iteration, a_t),
-              lower_goal - (s_t_plus_one - s_t),
+              lower_goal - (s_t_plus_one[:, :lower_goal.shape[1]] - s_t[:, :lower_goal.shape[1]]),
               time)
     prediction = tf.while_loop(
       lambda iteration, s_t, state_array, action_array, lower_goal, time: tf.less(iteration, time),
@@ -127,7 +127,7 @@ class ConnectedAgent(object):
               s_t_plus_one,
               state_array.write(iteration, s_t),
               action_array.write(iteration, a_t),
-              lower_goal - (s_t_plus_one - s_t),
+              lower_goal - (s_t_plus_one[:, :lower_goal.shape[1]] - s_t[:, :lower_goal.shape[1]]),
               time)
     prediction = tf.while_loop(
       lambda iteration, s_t, state_array, action_array, lower_goal, time: tf.less(iteration, time),
