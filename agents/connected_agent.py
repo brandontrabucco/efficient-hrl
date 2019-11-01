@@ -47,7 +47,7 @@ class ConnectedAgent(object):
                lower_agent,
                max_horizon,
                dynamics_function,
-               use_dynamics_for_bellman_update):
+               dynamics_relabel_probability):
     """Constructs a Connected Policy agent.
 
     Args:
@@ -55,14 +55,14 @@ class ConnectedAgent(object):
       lower_agent: a pointer to an existing lower level agent.
       max_horizon: an integer for max number of q inputs in time.
       dynamics_function: a TF function that predicts future states given (s_t, a_t).
-      use_dynamics_for_bellman_update: a boolean that specifies to sample next lower
+      dynamics_relabel_probability: a float that specifies the probability to sample next lower
         states using the dynamics function.
     """
     self.upper_agent = upper_agent
     self.lower_agent = lower_agent
     self.max_horizon = max_horizon
     self.dynamics_function = dynamics_function
-    self.use_dynamics_for_bellman_update = use_dynamics_for_bellman_update
+    self.dynamics_relabel_probability = dynamics_relabel_probability
 
   def unroll_dynamics(self, initial_states, upper_actions, stop_gradients=False):
     """Predicts into the future using the dynamics and the policy.
@@ -204,12 +204,19 @@ class ConnectedAgent(object):
       q values: A [batch_size] tensor of q values.
     """
     upper_actions = self.upper_agent.actor_net(states, stop_gradients=True)
-    if self.use_dynamics_for_bellman_update:
-      lower_states, lower_actions = self.unroll_dynamics(
-        lower_states[:, 0, :], upper_actions, stop_gradients=True)
-    else:
-      lower_actions = unbatch(self.lower_agent.actor_net(
-        concat_and_batch(lower_states, upper_actions), stop_gradients=True), tf.shape(lower_states)[1])
+    dynamics_lower_states, dynamics_lower_actions = self.unroll_dynamics(
+      lower_states[:, 0, :], upper_actions, stop_gradients=True)
+    lower_actions = unbatch(self.lower_agent.actor_net(
+      concat_and_batch(lower_states, upper_actions), stop_gradients=True), tf.shape(lower_states)[1])
+
+    relabel_mask = tf.cast(tf.random.uniform(
+      [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability, tf.float32)
+
+    lower_states = tf.where(tf.broadcast_to(
+      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
+    lower_actions = tf.where(tf.broadcast_to(
+      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions)
+
     return self.critic_net(
       states, upper_actions, for_critic_loss=for_critic_loss, 
       lower_states=lower_states, lower_actions=lower_actions)
@@ -226,12 +233,19 @@ class ConnectedAgent(object):
       q values: A [batch_size] tensor of q values.
     """
     upper_actions = self.upper_agent.target_actor_net(states)
-    if self.use_dynamics_for_bellman_update:
-      lower_states, lower_actions = self.unroll_target_dynamics(
-        lower_states[:, 0, :], upper_actions)
-    else:
-      lower_actions = unbatch(self.lower_agent.target_actor_net(
-        concat_and_batch(lower_states, upper_actions)), tf.shape(lower_states)[1])
+    dynamics_lower_states, dynamics_lower_actions = self.unroll_target_dynamics(
+      lower_states[:, 0, :], upper_actions)
+    lower_actions = unbatch(self.lower_agent.actor_target_net(
+      concat_and_batch(lower_states, upper_actions)), tf.shape(lower_states)[1])
+
+    relabel_mask = tf.cast(tf.random.uniform(
+      [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability, tf.float32)
+
+    lower_states = tf.where(tf.broadcast_to(
+      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
+    lower_actions = tf.where(tf.broadcast_to(
+      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions)
+
     return self.target_critic_net(
       states, upper_actions, for_critic_loss=for_critic_loss,
       lower_states=lower_states, lower_actions=lower_actions)
@@ -320,14 +334,20 @@ class ConnectedAgent(object):
     """
     self.upper_agent._validate_states(states)
 
-    upper_actions = self.upper_agent.actor_net(
-        states, stop_gradients=False)
-    if self.use_dynamics_for_bellman_update:
-      lower_states, lower_actions = self.unroll_dynamics(
-        lower_states[:, 0, :], upper_actions, stop_gradients=False)
-    else:
-      lower_actions = unbatch(self.lower_agent.actor_net(
-        concat_and_batch(lower_states, upper_actions), stop_gradients=False), tf.shape(lower_states)[1])
+    upper_actions = self.upper_agent.actor_net(states, stop_gradients=True)
+    dynamics_lower_states, dynamics_lower_actions = self.unroll_dynamics(
+      lower_states[:, 0, :], upper_actions, stop_gradients=True)
+    lower_actions = unbatch(self.lower_agent.actor_net(
+      concat_and_batch(lower_states, upper_actions), stop_gradients=True), tf.shape(lower_states)[1])
+
+    relabel_mask = tf.cast(tf.random.uniform(
+      [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability, tf.float32)
+
+    lower_states = tf.where(tf.broadcast_to(
+      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
+    lower_actions = tf.where(tf.broadcast_to(
+      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions)
+
     critic_values = self.critic_net(
       states, upper_actions, for_critic_loss=False,
       lower_states=lower_states, lower_actions=lower_actions)
