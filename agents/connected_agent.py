@@ -47,7 +47,7 @@ class ConnectedAgent(object):
                lower_agent,
                max_horizon,
                dynamics_function,
-               dynamics_relabel_probability):
+               relabel_using_dynamics):
     """Constructs a Connected Policy agent.
 
     Args:
@@ -55,14 +55,14 @@ class ConnectedAgent(object):
       lower_agent: a pointer to an existing lower level agent.
       max_horizon: an integer for max number of q inputs in time.
       dynamics_function: a TF function that predicts future states given (s_t, a_t).
-      dynamics_relabel_probability: a float that specifies the probability to sample next lower
+      relabel_using_dynamics: a bolean that specifies to sample next lower
         states using the dynamics function.
     """
     self.upper_agent = upper_agent
     self.lower_agent = lower_agent
     self.max_horizon = max_horizon
     self.dynamics_function = dynamics_function
-    self.dynamics_relabel_probability = dynamics_relabel_probability
+    self.relabel_using_dynamics = relabel_using_dynamics
 
   def unroll_dynamics(self, initial_states, upper_actions, stop_gradients=False):
     """Predicts into the future using the dynamics and the policy.
@@ -204,20 +204,13 @@ class ConnectedAgent(object):
       q values: A [batch_size] tensor of q values.
     """
     upper_actions = self.upper_agent.actor_net(states, stop_gradients=True)
-    lower_states = lower_states[:, :self.max_horizon, :]
 
-    dynamics_lower_states, dynamics_lower_actions = self.unroll_dynamics(
-      lower_states[:, 0, :], upper_actions, stop_gradients=True)
-    lower_actions = unbatch(self.lower_agent.actor_net(
-      concat_and_batch(lower_states, upper_actions), stop_gradients=True), tf.shape(lower_states)[1])
-
-    relabel_mask = tf.random.uniform(
-      [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability
-
-    lower_states = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
-    lower_actions = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions)
+    if self.relabel_using_dynamics:
+      lower_states, lower_actions = self.unroll_dynamics(
+        lower_states[:, 0, :], upper_actions, stop_gradients=True)
+    else:
+      lower_actions = unbatch(self.lower_agent.actor_net(
+        concat_and_batch(lower_states, upper_actions), stop_gradients=True), tf.shape(lower_states)[1])
 
     return self.critic_net(
       states, upper_actions, for_critic_loss=for_critic_loss, 
@@ -235,20 +228,13 @@ class ConnectedAgent(object):
       q values: A [batch_size] tensor of q values.
     """
     upper_actions = self.upper_agent.target_actor_net(states)
-    lower_states = lower_states[:, :self.max_horizon, :]
 
-    dynamics_lower_states, dynamics_lower_actions = self.unroll_target_dynamics(
-      lower_states[:, 0, :], upper_actions)
-    lower_actions = unbatch(self.lower_agent.target_actor_net(
-      concat_and_batch(lower_states, upper_actions)), tf.shape(lower_states)[1])
-
-    relabel_mask = tf.random.uniform(
-      [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability
-
-    lower_states = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
-    lower_actions = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions)
+    if self.relabel_using_dynamics:
+      lower_states, lower_actions = self.unroll_target_dynamics(
+        lower_states[:, 0, :], upper_actions)
+    else:
+      lower_actions = unbatch(self.lower_agent.target_actor_net(
+        concat_and_batch(lower_states, upper_actions)), tf.shape(lower_states)[1])
 
     return self.target_critic_net(
       states, upper_actions, for_critic_loss=for_critic_loss,
@@ -337,21 +323,14 @@ class ConnectedAgent(object):
       ValueError: If `states` does not have the expected dimensions.
     """
     self.upper_agent._validate_states(states)
-    lower_states = lower_states[:, :self.max_horizon, :]
+    upper_actions = self.upper_agent.actor_net(states, stop_gradients=False)
 
-    upper_actions = self.upper_agent.actor_net(states, stop_gradients=True)
-    dynamics_lower_states, dynamics_lower_actions = self.unroll_dynamics(
-      lower_states[:, 0, :], upper_actions, stop_gradients=True)
-    lower_actions = unbatch(self.lower_agent.actor_net(
-      concat_and_batch(lower_states, upper_actions), stop_gradients=True), tf.shape(lower_states)[1])
-
-    relabel_mask = tf.random.uniform(
-      [tf.shape(states)[0], 1, 1]) < self.dynamics_relabel_probability
-
-    lower_states = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_states)), dynamics_lower_states, lower_states)
-    lower_actions = tf.where(tf.broadcast_to(
-      relabel_mask, tf.shape(lower_actions)), dynamics_lower_actions, lower_actions)
+    if self.relabel_using_dynamics:
+      lower_states, lower_actions = self.unroll_dynamics(
+        lower_states[:, 0, :], upper_actions, stop_gradients=False)
+    else:
+      lower_actions = unbatch(self.lower_agent.actor_net(
+        concat_and_batch(lower_states, upper_actions), stop_gradients=False), tf.shape(lower_states)[1])
 
     critic_values = self.critic_net(
       states, upper_actions, for_critic_loss=False,

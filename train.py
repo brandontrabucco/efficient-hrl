@@ -382,7 +382,7 @@ def train_uvf(train_dir,
               load_path=LOAD_PATH,
               use_connected_policies=False,
               max_critic_horizon=10,
-              dynamics_relabel_probability=0.0):
+              relabel_using_dynamics=False):
   """Train an agent."""
   tf_env = create_maze_env.TFPyEnvironment(environment)
   observation_spec = [tf_env.observation_spec()]
@@ -424,7 +424,7 @@ def train_uvf(train_dir,
         uvf_agent,
         max_critic_horizon,
         create_ground_truth_dynamics(),
-        dynamics_relabel_probability)
+        relabel_using_dynamics)
 
   with tf.variable_scope('state_preprocess'):
     state_preprocess = state_preprocess_class()
