@@ -288,24 +288,31 @@ def sample_best_meta_actions(state_reprs, next_state_reprs, prev_meta_actions,
   return actions
 
 
-def predict_ground_truth_dynamics(environment, x):
+def predict_ground_truth_dynamics(environment, x, render):
   """Query a ground truth dynamics model in the provided environment."""
   state, action = x
   environment.reset()
+  if render:
+      environment.render(mode="human")
   environment.set_obs(state)
-  return environment.step(action)[0]
+  if render:
+      environment.render(mode="human")
+  next_state = environment.step(action)[0]
+  if render:
+      environment.render(mode="human")
+  return next_state
 
 
-def ground_truth_dynamics_process(environment, input_queue, output_queue):
+def ground_truth_dynamics_process(environment, input_queue, output_queue, render):
     """Process to run ground truth dynamics models."""
     while True:
-        output_queue.put(predict_ground_truth_dynamics(environment, input_queue.get()))
+        output_queue.put(predict_ground_truth_dynamics(environment, input_queue.get(), render))
 
 
-def start_ground_truth_dynamics_process(environment, input_queue, output_queue):
+def start_ground_truth_dynamics_process(environment, input_queue, output_queue, render):
     """Process to run ground truth dynamics models."""
     m.Process(target=ground_truth_dynamics_process, args=(
-        environment, input_queue, output_queue)).start()
+        environment, input_queue, output_queue, render)).start()
 
 
 @gin.configurable
@@ -313,7 +320,7 @@ def create_ground_truth_dynamics(environment=None, max_cores=24):
   """Creates an oracle dynamics model function to process batches of states and actions."""
   input_queue, output_queue = m.Queue(), m.Queue()
   for i in range(max_cores):
-    start_ground_truth_dynamics_process(environment.gym, input_queue, output_queue)
+    start_ground_truth_dynamics_process(environment.gym, input_queue, output_queue, False)
   def ground_truth_dynamics(np_states, np_actions):
     batch_size = np_states.shape[0]
     for idx in range(batch_size):
