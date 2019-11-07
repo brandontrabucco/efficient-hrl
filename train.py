@@ -57,7 +57,7 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
                        episode_rewards, episode_meta_rewards,
                        store_context,
                        disable_agent_reset,
-                       save_all_meta_windows):
+                       use_windowed_data_collection):
   """Collect experience in a tf_env into a replay_buffer using action_fn.
 
   Args:
@@ -73,7 +73,7 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
     num_resets: A variable to count the number of resets.
     store_context: A boolean to check if store context in replay.
     disable_agent_reset: A boolean that disables agent from resetting.
-    save_all_meta_windows: A boolean that controls if all possible windows of
+    use_windowed_data_collection: A boolean that controls if all possible windows of
       meta transitions are saved in the meta replay buffer
 
   Returns:
@@ -172,7 +172,7 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
 
     meta_end = tf.logical_and(  # End of meta-transition.
         tf.equal(agent.tf_context.t % meta_action_every_n, 1),
-        agent.tf_context.t > 1) if not save_all_meta_windows else tf.fill([], True)
+        agent.tf_context.t > 1) if not use_windowed_data_collection else tf.fill([], True)
     with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
       states_var = tf.get_variable('states_var',
                                    [meta_action_every_n * 2, state.shape[-1]],
@@ -181,8 +181,7 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
                                     [meta_action_every_n * 2, action.shape[-1]],
                                     action.dtype)
       state_var = tf.get_variable('state_var', state.shape, state.dtype)
-      reward_var = tf.get_variable('reward_var', reward.shape, reward.dtype)
-      rewards_var = tf.get_variable('rewards_var', [meta_action_every_n * 2, reward.shape[-1]], reward.dtype)
+      reward_var = tf.get_variable('rewards_var', [meta_action_every_n * 2], reward.dtype)
       meta_action_var = tf.get_variable('meta_action_var',
                                         meta_action.shape, meta_action.dtype)
       meta_context_var = [
@@ -190,16 +189,16 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
                           meta_context[idx].shape, meta_context[idx].dtype)
           for idx in range(len(meta_context))]
 
-    actions_var_upd = tf.assign(actions_var, tf.concat([actions_var[1:, :], [action]], 1))
+    actions_var_upd = tf.assign(actions_var, tf.concat([actions_var[1:, :], [action]], 0))
 
     with tf.control_dependencies([actions_var_upd]):
       actions = tf.identity(actions_var) + tf.zeros_like(actions_var)
       meta_reward = tf.identity(meta_reward) + tf.zeros_like(meta_reward)
       meta_reward = tf.reshape(meta_reward, reward.shape)
-      reward_var_upd = tf.assign(rewards_var, tf.concat([rewards_var[1:, :], [0.1 * meta_reward]], 1))
+      reward_var_upd = tf.assign(reward_var, tf.concat([reward_var[1:], [0.1 * meta_reward]], 0))
 
     meta_transition = [state_var, meta_action_var,
-                       tf.reduce_sum(reward_var[:meta_action_every_n, :]),
+                       tf.reduce_sum(reward_var[:meta_action_every_n]),
                        discount * (1 - tf.to_float(next_reset_episode_cond)),
                        next_state]
     meta_transition.extend([states_var, actions])
@@ -220,7 +219,7 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
                                     tf_env.reset,
                                     tf_env.current_time_step)
     meta_period = tf.equal(agent.tf_context.t % meta_action_every_n, 1)
-    states_var_upd = tf.assign(states_var, tf.concat([states_var[1:, :], [next_state]], 1))
+    states_var_upd = tf.assign(states_var, tf.concat([states_var[1:, :], [next_state]], 0))
     state_var_upd = tf.assign(
         state_var,
         tf.cond(meta_period, lambda: next_state, lambda: state_var))
@@ -362,7 +361,8 @@ def train_uvf(train_dir,
               load_path=LOAD_PATH,
               use_connected_policies=False,
               max_critic_horizon=10,
-              relabel_using_dynamics=False):
+              relabel_using_dynamics=False,
+              use_windowed_data_collection=False):
   """Train an agent."""
   tf_env = create_maze_env.TFPyEnvironment(environment)
   observation_spec = [tf_env.observation_spec()]
@@ -463,6 +463,7 @@ def train_uvf(train_dir,
       episode_meta_rewards=episode_meta_rewards,
       store_context=True,
       disable_agent_reset=False,
+      use_windowed_data_collection=use_windowed_data_collection
   )
 
   # Create train ops
@@ -482,6 +483,7 @@ def train_uvf(train_dir,
       episode_meta_rewards=episode_meta_rewards,
       store_context=True,
       disable_agent_reset=False,
+      use_windowed_data_collection=use_windowed_data_collection
   )
 
   train_op_list = []
@@ -535,9 +537,9 @@ def train_uvf(train_dir,
         low_states = batch_dequeue[5]
         low_actions = batch_dequeue[6]
         low_state_reprs = state_preprocess(low_states)
-        low_states, low_next_states = tf.split(low_states, 2)
-        low_actions, low_next_actions = tf.split(low_actions, 2)
-        low_state_reprs, low_next_state_reprs = tf.split(low_state_reprs, 2)
+        low_states, low_next_states = tf.split(low_states, 2, axis=1)
+        low_actions, low_next_actions = tf.split(low_actions, 2, axis=1)
+        low_state_reprs, low_next_state_reprs = tf.split(low_state_reprs, 2, axis=1)
 
       state_reprs = state_preprocess(states)
       next_state_reprs = state_preprocess(next_states)
@@ -550,6 +552,7 @@ def train_uvf(train_dir,
           actions = inverse_dynamics.sample(state_reprs, next_state_reprs, 1, prev_actions, sc=0.1)
           actions = tf.stop_gradient(actions)
         elif FLAGS.goal_sample_strategy == 'sample':
+          print(state_reprs.shape, low_states.shape)
           actions = sample_best_meta_actions(state_reprs, next_state_reprs, prev_actions,
                                              low_states, low_actions, low_state_reprs,
                                              inverse_dynamics, uvf_agent, k=10)
