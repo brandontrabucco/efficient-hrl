@@ -56,7 +56,8 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
                        environment_steps, num_episodes, num_resets,
                        episode_rewards, episode_meta_rewards,
                        store_context,
-                       disable_agent_reset):
+                       disable_agent_reset,
+                       save_all_meta_windows):
   """Collect experience in a tf_env into a replay_buffer using action_fn.
 
   Args:
@@ -72,6 +73,8 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
     num_resets: A variable to count the number of resets.
     store_context: A boolean to check if store context in replay.
     disable_agent_reset: A boolean that disables agent from resetting.
+    save_all_meta_windows: A boolean that controls if all possible windows of
+      meta transitions are saved in the meta replay buffer
 
   Returns:
     A collect_experience_op that excute an action and store into the
@@ -169,16 +172,17 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
 
     meta_end = tf.logical_and(  # End of meta-transition.
         tf.equal(agent.tf_context.t % meta_action_every_n, 1),
-        agent.tf_context.t > 1)
+        agent.tf_context.t > 1) if not save_all_meta_windows else tf.fill([], True)
     with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
       states_var = tf.get_variable('states_var',
-                                   [meta_action_every_n, state.shape[-1]],
+                                   [meta_action_every_n * 2, state.shape[-1]],
                                    state.dtype)
       actions_var = tf.get_variable('actions_var',
-                                    [meta_action_every_n, action.shape[-1]],
+                                    [meta_action_every_n * 2, action.shape[-1]],
                                     action.dtype)
       state_var = tf.get_variable('state_var', state.shape, state.dtype)
       reward_var = tf.get_variable('reward_var', reward.shape, reward.dtype)
+      rewards_var = tf.get_variable('rewards_var', [meta_action_every_n * 2, reward.shape[-1]], reward.dtype)
       meta_action_var = tf.get_variable('meta_action_var',
                                         meta_action.shape, meta_action.dtype)
       meta_context_var = [
@@ -186,17 +190,16 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
                           meta_context[idx].shape, meta_context[idx].dtype)
           for idx in range(len(meta_context))]
 
-    actions_var_upd = tf.scatter_update(
-        actions_var, (agent.tf_context.t - 2) % meta_action_every_n, action)
+    actions_var_upd = tf.assign(actions_var, tf.concat([actions_var[1:, :], [action]], 1))
 
     with tf.control_dependencies([actions_var_upd]):
       actions = tf.identity(actions_var) + tf.zeros_like(actions_var)
       meta_reward = tf.identity(meta_reward) + tf.zeros_like(meta_reward)
       meta_reward = tf.reshape(meta_reward, reward.shape)
+      reward_var_upd = tf.assign(rewards_var, tf.concat([rewards_var[1:, :], [0.1 * meta_reward]], 1))
 
-    reward = 0.1 * meta_reward
     meta_transition = [state_var, meta_action_var,
-                       reward_var + reward,
+                       tf.reduce_sum(reward_var[:meta_action_every_n, :]),
                        discount * (1 - tf.to_float(next_reset_episode_cond)),
                        next_state]
     meta_transition.extend([states_var, actions])
@@ -204,45 +207,23 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
       transition += context + list(agent.context_vars)
       meta_transition += meta_context_var + list(meta_agent.context_vars)
 
-    with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
-      meta_initialized = tf.get_variable('meta_initialized', [], tf.bool, initializer=tf.constant_initializer(False))
-      meta_transition_previous = [
-        tf.get_variable(meta_transition[idx].name[:-2] + "_previous",
-                        meta_transition[idx].shape,
-                        meta_transition[idx].dtype)
-        for idx in range(len(meta_transition))]
-
-    meta_step_cond = tf.squeeze(tf.logical_and(step_cond, tf.logical_or(next_reset_episode_cond, meta_end)))
+    meta_step_cond = tf.squeeze(tf.logical_and(
+        step_cond, tf.logical_or(next_reset_episode_cond, meta_end)))
     collect_experience_op = tf.group(
         replay_buffer.maybe_add(transition, step_cond),
         meta_replay_buffer.maybe_add(
-            meta_transition_previous + meta_transition, tf.logical_and(meta_step_cond, meta_initialized)))
+            meta_transition, tf.logical_and(
+                meta_step_cond, tf.greater(agent.tf_context.t, meta_action_every_n * 2))))
 
   with tf.control_dependencies([collect_experience_op]):
-    init_transition_op = tf.assign(meta_initialized, tf.cond(meta_step_cond, lambda: True, lambda: meta_initialized))
-    meta_transition_update_ops = [
-      tf.assign(meta_transition_previous[idx],
-                tf.cond(meta_step_cond,
-                        lambda: meta_transition[idx],
-                        lambda: meta_transition_previous[idx]))
-      for idx in range(len(meta_transition))]
-
-  with tf.control_dependencies(meta_transition_update_ops):
     collect_experience_op = tf.cond(reset_env_cond,
                                     tf_env.reset,
                                     tf_env.current_time_step)
     meta_period = tf.equal(agent.tf_context.t % meta_action_every_n, 1)
-    states_var_upd = tf.scatter_update(
-        states_var, (agent.tf_context.t - 1) % meta_action_every_n,
-        next_state)
+    states_var_upd = tf.assign(states_var, tf.concat([states_var[1:, :], [next_state]], 1))
     state_var_upd = tf.assign(
         state_var,
         tf.cond(meta_period, lambda: next_state, lambda: state_var))
-    reward_var_upd = tf.assign(
-        reward_var,
-        tf.cond(meta_period,
-                lambda: tf.zeros_like(reward_var),
-                lambda: reward_var + reward))
     meta_action = tf.to_float(tf.concat(agent.context_vars, -1))
     meta_action_var_upd = tf.assign(
         meta_action_var,
@@ -255,9 +236,8 @@ def collect_experience(tf_env, agent, meta_agent, state_preprocess,
                     lambda: meta_context_var[idx]))
         for idx in range(len(meta_context))]
 
-  ops_to_run = meta_context_var_upd + meta_transition_update_ops + [
+  ops_to_run = meta_context_var_upd + [
       collect_experience_op,
-      init_transition_op,
       states_var_upd,
       state_var_upd,
       reward_var_upd,
@@ -555,13 +535,12 @@ def train_uvf(train_dir,
         low_states = batch_dequeue[5]
         low_actions = batch_dequeue[6]
         low_state_reprs = state_preprocess(low_states)
+        low_states, low_next_states = tf.split(low_states, 2)
+        low_actions, low_next_actions = tf.split(low_actions, 2)
+        low_state_reprs, low_next_state_reprs = tf.split(low_state_reprs, 2)
+
       state_reprs = state_preprocess(states)
       next_state_reprs = state_preprocess(next_states)
-        
-      if mode == "meta" and use_connected_policies:
-        low_next_states = batch_dequeue[(7 + len(contexts) * 2) + 5]
-        low_next_actions = batch_dequeue[(7 + len(contexts) * 2) + 6]
-        low_next_state_reprs = state_preprocess(low_next_states)
 
       if mode == 'meta':  # Re-label meta-action
         prev_actions = actions
