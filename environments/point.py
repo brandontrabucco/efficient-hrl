@@ -106,3 +106,6 @@ class PointEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     qpos[1] = xy[1]
 
     qvel = self.physics.data.qvel
+
+  def get_xy(self):
+    return np.array([self.physics.data.qpos[0], self.physics.data.qpos[1]])

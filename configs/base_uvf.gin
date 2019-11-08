@@ -61,7 +61,7 @@ meta/ddpg_critic_net.images = %IMAGES
 
 tf.losses.huber_loss.delta = 1.0
 # Sample action
-uvf_add_noise_fn.stddev = 1.0
+uvf_add_noise_fn.stddev = %EXPLORE_NOISE
 meta_add_noise_fn.stddev = %META_EXPLORE_NOISE
 # Update targets
 ddpg_update_targets.tau = 0.001

@@ -9,6 +9,10 @@ CONTEXT_RANGE_MIN = -10
 CONTEXT_RANGE_MAX = 10
 SUBGOAL_DIM = 2
 META_EXPLORE_NOISE = 1.0
+EXPLORE_NOISE = 1.0
+
+NUM_COLLECT_PER_UPDATE = 1
+NUM_COLLECT_PER_META_UPDATE = 10
 
 uvf/negative_distance.summarize = False
 uvf/negative_distance.relative_context = True

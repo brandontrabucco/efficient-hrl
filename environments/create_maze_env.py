@@ -72,6 +72,12 @@ def create_maze_env(env_name=None, top_down_view=False):
   }
   gym_env = cls(**gym_mujoco_kwargs)
   gym_env.reset()
+  original_step = gym_env.step
+
+  def step(*args, **kwargs):
+    gym_env.render(mode="human")
+    return original_step(*args, **kwargs)
+  # gym_env.step = step
   wrapped_env = gym_wrapper.GymWrapper(gym_env)
   return wrapped_env
 
