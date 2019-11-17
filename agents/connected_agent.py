@@ -55,7 +55,7 @@ class ConnectedAgent(object):
       lower_agent: a pointer to an existing lower level agent.
       max_horizon: an integer for max number of q inputs in time.
       dynamics_function: a TF function that predicts future states given (s_t, a_t).
-      relabel_using_dynamics: a bolean that specifies to sample next lower
+      relabel_using_dynamics: a boolean that specifies to sample next lower
         states using the dynamics function.
     """
     self.upper_agent = upper_agent
@@ -341,6 +341,9 @@ class ConnectedAgent(object):
     dqda_unclipped = dqda
     if self._dqda_clipping > 0:
       dqda = tf.clip_by_value(dqda, -self._dqda_clipping, self._dqda_clipping)
+
+    cov = tf.linalg.trace(tf.matmul(dqda_unclipped, dqda_unclipped, transpose_a=True))
+    tf.summary.scalar('dqda_trace_cov', cov)
 
     actions_norm = tf.norm(upper_actions)
     if self._debug_summaries:

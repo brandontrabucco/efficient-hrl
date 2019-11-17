@@ -365,6 +365,9 @@ class DdpgAgent(object):
     if self._dqda_clipping > 0:
       dqda = tf.clip_by_value(dqda, -self._dqda_clipping, self._dqda_clipping)
 
+    cov = tf.linalg.trace(tf.matmul(dqda_unclipped, dqda_unclipped, transpose_a=True))
+    tf.summary.scalar('dqda_trace_cov', cov)
+
     actions_norm = tf.norm(actions)
     if self._debug_summaries:
       with tf.name_scope('dqda'):

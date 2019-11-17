@@ -362,7 +362,8 @@ def train_uvf(train_dir,
               use_connected_policies=False,
               max_critic_horizon=10,
               relabel_using_dynamics=False,
-              use_windowed_data_collection=False):
+              use_windowed_data_collection=False,
+              skip_training_policies=False):
   """Train an agent."""
   tf_env = create_maze_env.TFPyEnvironment(environment)
   observation_spec = [tf_env.observation_spec()]
@@ -616,6 +617,10 @@ def train_uvf(train_dir,
         actor_loss = agent.actor_loss(merged_states, actions,
                                       context_rewards, context_discounts,
                                       merged_next_states)
+
+      # to isolate factors set the actor to a fixed value
+      if skip_training_policies:
+        actor_loss *= 0.0
         
       critic_loss = tf.reduce_mean(critic_loss)
 
